@@ -1,0 +1,678 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700;900&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js"></script>
+    
+    <title>Super Bowl Squares</title>
+    <style>
+        /* --- MATERIAL 3 EXPRESSIVE THEME (Purple High Contrast) --- */
+        :root {
+            /* Surfaces */
+            --md-sys-color-background: #000000; 
+            --md-sys-color-surface: #121212;
+            --md-sys-color-surface-container: #1E1E1E;
+            --md-sys-color-surface-container-high: #2C2C2C;
+            --md-sys-color-surface-container-highest: #383838;
+            
+            /* Accents (Purple/Pastel) */
+            --md-sys-color-primary: #D0BCFF;
+            --md-sys-color-on-primary: #381E72;
+            --md-sys-color-primary-container: #4F378B;
+            --md-sys-color-on-primary-container: #EADDFF;
+            
+            --md-sys-color-secondary-container: #4A4458;
+            --md-sys-color-on-secondary-container: #E8DEF8;
+
+            --md-sys-color-tertiary: #FFB0CD;
+            --md-sys-color-tertiary-container: #633B48;
+            --md-sys-color-on-tertiary-container: #FFD8E4;
+
+            --md-sys-color-error: #F2B8B5;
+            
+            /* Text */
+            --md-sys-color-on-surface: #FFFFFF;       
+            --md-sys-color-on-surface-variant: #E6E0E9; 
+            --text-secondary: #CCCCCC;               
+
+            /* Shapes */
+            --radius-md: 16px;
+            --radius-lg: 24px;
+            --radius-xl: 28px;
+            --radius-pill: 999px;
+            
+            --header-offset: 60px;
+            --gap-size: 6px;
+        }
+
+        body { 
+            font-family: 'Roboto', sans-serif; 
+            margin: 0; padding: 20px 10px 120px 10px;
+            background: var(--md-sys-color-background); 
+            color: var(--md-sys-color-on-surface);
+            text-align: center;
+        }
+
+        h1 { 
+            margin: 10px 0 10px; font-weight: 800; font-size: 2.2rem;
+            letter-spacing: -0.5px; color: var(--md-sys-color-on-surface);
+        }
+
+        /* LIVE SCORE PILL */
+        #live-score-pill {
+            display: inline-flex; align-items: center; gap: 10px;
+            background: var(--md-sys-color-tertiary-container);
+            color: var(--md-sys-color-on-tertiary-container);
+            padding: 8px 20px; border-radius: 50px;
+            font-weight: 900; font-size: 1.1rem;
+            margin-bottom: 20px; border: 1px solid var(--md-sys-color-tertiary);
+            box-shadow: 0 0 15px rgba(255, 176, 205, 0.2);
+            opacity: 0; transition: opacity 0.3s; pointer-events: none; height: 0; overflow: hidden; padding: 0; margin: 0;
+        }
+        #live-score-pill.active { opacity: 1; height: auto; padding: 8px 20px; margin-bottom: 25px; pointer-events: auto; }
+        
+        #status {
+            display: inline-block; padding: 8px 24px; border-radius: 50px;
+            font-size: 0.95rem; font-weight: 600; letter-spacing: 0.5px;
+            margin-bottom: 30px; 
+            background: var(--md-sys-color-surface-container-highest);
+            color: white; border: 1px solid #444;
+        }
+
+        /* --- STATS DASHBOARD --- */
+        .stats-row { display: flex; justify-content: center; gap: 12px; margin-bottom: 30px; flex-wrap: wrap; }
+        .stat-card {
+            background: var(--md-sys-color-surface-container); 
+            padding: 16px; border-radius: var(--radius-lg);
+            text-align: center; flex: 1; min-width: 100px; max-width: 150px;
+            border: 1px solid #333; 
+        }
+        .stat-card.primary { background: var(--md-sys-color-primary-container); color: var(--md-sys-color-on-primary-container); border: none; }
+        .stat-card.secondary { background: var(--md-sys-color-secondary-container); color: var(--md-sys-color-on-secondary-container); border: none; }
+
+        .stat-value { font-size: 1.5rem; font-weight: 800; margin-bottom: 4px; color: white; }
+        .stat-label { font-size: 0.75rem; color: #BBB; text-transform: uppercase; font-weight: 600; letter-spacing: 0.5px; }
+        
+        .stat-card.primary .stat-value, .stat-card.primary .stat-label { color: var(--md-sys-color-on-primary-container); opacity: 1; }
+        .stat-card.secondary .stat-value, .stat-card.secondary .stat-label { color: var(--md-sys-color-on-secondary-container); opacity: 1; }
+
+        /* --- INSTRUCTION GRID --- */
+        .inst-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; max-width: 900px; margin: 0 auto 30px auto; text-align: left; }
+        .inst-card {
+            background: var(--md-sys-color-surface-container-high); 
+            padding: 20px; border-radius: var(--radius-lg);
+            display: flex; flex-direction: column; gap: 8px;
+            border: 1px solid #333;
+        }
+        .inst-title { color: var(--md-sys-color-primary); font-weight: 700; font-size: 1.15rem; }
+        .inst-text { color: var(--text-secondary); line-height: 1.5; font-size: 1rem; }
+        .warn-text { color: var(--md-sys-color-error); font-weight: 700; }
+
+        /* --- PAYMENT CARD --- */
+        .payment-card {
+            background: var(--md-sys-color-tertiary-container);
+            color: var(--md-sys-color-on-tertiary-container);
+            padding: 24px; border-radius: var(--radius-xl); 
+            max-width: 450px; margin: 0 auto 40px auto; text-align: center;
+        }
+        .venmo-btn {
+            display: inline-block; 
+            background: #FFFFFF; color: #000000; 
+            text-decoration: none; font-weight: 800; padding: 14px 32px;
+            border-radius: 50px; margin-top: 15px; font-size: 1rem;
+            transition: transform 0.2s;
+        }
+        .venmo-btn:hover { transform: scale(1.05); }
+
+        /* --- SEARCH & TESTER CONTAINER --- */
+        .controls-area {
+            background: var(--md-sys-color-surface-container);
+            padding: 20px; border-radius: var(--radius-xl);
+            max-width: 500px; margin: 0 auto 30px auto;
+            border: 1px solid #333;
+        }
+
+        /* SEARCH BAR */
+        .search-container { margin-bottom: 15px; position: relative; }
+        .search-input {
+            width: 100%; padding: 14px 20px; border-radius: 50px;
+            border: 1px solid #444; background: var(--md-sys-color-surface-container-high); 
+            color: white; font-weight: 500; font-size: 1rem; outline: none; box-sizing: border-box;
+            transition: background 0.2s; text-align: center; font-family: 'Roboto', sans-serif;
+        }
+        .search-input::placeholder { color: #AAA; }
+        .search-input:focus { background: var(--md-sys-color-surface-container-highest); border-color: var(--md-sys-color-primary); }
+
+        /* SCENARIO TESTER */
+        .tester-row {
+            display: flex; align-items: center; justify-content: center; gap: 10px;
+            margin-top: 15px; padding-top: 15px; border-top: 1px solid #333;
+        }
+        .test-input {
+            width: 90px;
+            padding: 10px; border-radius: 12px;
+            border: 1px solid #444; background: var(--md-sys-color-surface-container-high);
+            color: white; text-align: center; font-weight: bold; outline: none;
+            font-size: 0.9rem; transition: border-color 0.2s;
+        }
+        .test-input::placeholder { color: #777; font-weight: normal; font-size: 0.8rem; text-transform: uppercase; }
+        .test-input:focus { border-color: #FF6D00; background: var(--md-sys-color-surface-container-highest); }
+        
+        .test-label { font-size: 0.8rem; color: var(--text-secondary); text-transform: uppercase; font-weight: bold; }
+
+        /* --- GRID (Mobile Pan & Zoom Fix) --- */
+        .grid-container { 
+            width: 100%; max-width: 100vw; margin: 0 auto; padding: 10px 0;
+            overflow: auto; -webkit-overflow-scrolling: touch; 
+            display: flex; justify-content: center; background: var(--md-sys-color-background); 
+        }
+        @media (max-width: 900px) { 
+            .grid-container { 
+                height: 70vh; display: block; 
+                border: 1px solid #333; border-radius: 16px;
+            } 
+        }
+
+        .grid { 
+            display: grid; 
+            grid-template-columns: 55px 55px repeat(10, 75px); 
+            grid-template-rows: 55px 55px repeat(10, 65px); 
+            gap: var(--gap-size); min-width: 860px; /* Forces scroll */
+            margin: 0 auto; padding: 10px;
+        }
+        @media (max-width: 600px) {
+            .grid { grid-template-columns: 35px 40px repeat(10, 60px); grid-template-rows: 40px 40px repeat(10, 50px); min-width: 680px; }
+            body { padding: 10px 5px 120px 5px; } h1 { font-size: 1.8rem; } :root { --header-offset: 45px; }
+        }
+
+        .cell { 
+            background: var(--md-sys-color-surface-container-high); border-radius: 12px;
+            display: flex; align-items: center; justify-content: center; 
+            font-size: 0.95rem; font-weight: 600; position: relative; 
+            overflow: hidden; word-break: break-word; padding: 2px; line-height: 1.1;
+            box-shadow: 0 1px 2px rgba(0,0,0,0.1); 
+        }
+
+        .team-top-bar { grid-column: 3 / span 10; grid-row: 1; border-radius: 50px; color: white; font-weight: 800; font-size: 1.5rem; letter-spacing: 0.5px; position: sticky; top: 0; z-index: 20; box-shadow: 0 4px 8px rgba(0,0,0,0.3); text-shadow: 0 1px 2px rgba(0,0,0,0.5); display:flex; align-items:center; justify-content:center; }
+        .team-left-bar { grid-column: 1; grid-row: 3 / span 10; border-radius: 50px; color: white; font-weight: 800; font-size: 1.5rem; letter-spacing: 0.5px; position: sticky; left: 0; z-index: 20; writing-mode: vertical-rl; transform: rotate(180deg); box-shadow: 0 4px 8px rgba(0,0,0,0.3); text-shadow: 0 1px 2px rgba(0,0,0,0.5); display:flex; align-items:center; justify-content:center; }
+        
+        .header-top, .header-left { 
+            background: var(--md-sys-color-surface-container-highest); color: white; 
+            font-weight: 800; font-size: 1.2rem; position: sticky; z-index: 10; border-radius: 12px; 
+        }
+        .header-top { top: var(--header-offset); }
+        .header-left { left: var(--header-offset); z-index: 11; }
+        @media (max-width: 600px) { .header-left { left: 40px; } }
+
+        /* Corner Dead Space */
+        .corner-dead { background: transparent; pointer-events: none; }
+
+        /* SQUARES STATES */
+        .square { cursor: pointer; color: #AAA; background: var(--md-sys-color-surface-container-high); transition: all 0.2s cubic-bezier(0.2, 0.0, 0.2, 1); }
+        .square:hover { transform: scale(0.92); filter: brightness(1.3); color: white; }
+        
+        .square.taken { 
+            background: var(--md-sys-color-primary-container); color: var(--md-sys-color-on-primary-container); 
+            font-weight: 700; cursor: default; box-shadow: inset 0 2px 4px rgba(0,0,0,0.2);
+        }
+        .square.taken:hover { transform: none; filter: none; }
+        
+        .square.selected { 
+            background: var(--md-sys-color-primary); color: #2a0050; 
+            transform: scale(0.92); z-index: 5; box-shadow: 0 0 0 2px white; 
+        }
+
+        /* Search Dimming */
+        .grid.searching .square { opacity: 0.15; }
+        .grid.searching .square.highlight { opacity: 1; transform: scale(1.1); z-index: 15; box-shadow: 0 4px 12px rgba(0,0,0,0.5); border: 2px solid var(--md-sys-color-primary); }
+        
+        /* TEST HIGHLIGHT (Orange Outline, No Dimming) */
+        .square.test-highlight { 
+            z-index: 20; transform: scale(1.1);
+            border: 4px solid #FF6D00; /* Vivid Orange */
+            box-shadow: 0 0 15px rgba(255, 109, 0, 0.4);
+        }
+
+        /* GHOST SQUARE (Live Score) */
+        .square.ghost-active {
+            z-index: 18;
+            border: 3px dashed white;
+            box-shadow: 0 0 10px rgba(255,255,255,0.3);
+        }
+
+        /* WINNER ANIMATION (Heartbeat, No Glow, Black Text) */
+        @keyframes intensePulse { 
+            0% { transform: scale(1); }
+            50% { transform: scale(1.1); } 
+            100% { transform: scale(1); }
+        }
+        .square.winner { 
+            background: #FFD700 !important; color: #000000 !important; 
+            font-weight: 900; z-index: 15; opacity: 1 !important; 
+            border-radius: 50px; border: 2px solid white;
+            animation: intensePulse 1s infinite ease-in-out; 
+        }
+        .square.phantom { background: transparent !important; border: 2px dashed #FFD700; color: #FFD700; font-size: 0.7rem; z-index: 14; opacity: 1 !important; }
+
+        .results-section { margin-top: 30px; display: flex; flex-direction: column; align-items: center; gap: 12px; }
+        .result-card { background: var(--md-sys-color-surface-container); padding: 16px 24px; border-radius: 50px; width: 90%; max-width: 450px; display: flex; justify-content: space-between; align-items: center; border: 1px solid #333; }
+        .quarter-badge { background: var(--md-sys-color-surface-container-highest); color: white; padding: 6px 14px; border-radius: 20px; font-weight: 700; font-size: 0.8rem; }
+
+        /* FAB */
+        #submit-bar { position: fixed; bottom: 30px; right: 20px; left: auto; transform: none; background: var(--md-sys-color-primary); color: #2a0050; padding: 16px 24px; border-radius: 16px; font-weight: 800; font-size: 1rem; box-shadow: 0 4px 8px 3px rgba(0,0,0,0.15), 0 1px 3px rgba(0,0,0,0.3); cursor: pointer; z-index: 1000; display: none; animation: slideUp 0.3s cubic-bezier(0.2, 0.0, 0.2, 1); }
+        #submit-bar:hover { filter: brightness(1.1); box-shadow: 0 6px 12px 4px rgba(0,0,0,0.15); }
+        @keyframes slideUp { from { transform: translateY(100px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+
+        /* SNACKBAR */
+        #snackbar {
+            visibility: hidden; min-width: 250px; margin-left: -125px;
+            background-color: var(--md-sys-color-on-surface); 
+            color: var(--md-sys-color-surface); 
+            text-align: center; border-radius: 50px; padding: 16px;
+            position: fixed; z-index: 3000; left: 50%; bottom: 30px;
+            font-weight: 600; box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+            transform: translateY(20px); opacity: 0;
+            transition: all 0.3s cubic-bezier(0.2, 0.0, 0.2, 1);
+        }
+        #snackbar.show { visibility: visible; transform: translateY(0); opacity: 1; }
+
+        /* MODAL */
+        .modal-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); backdrop-filter: blur(8px); z-index: 2000; display: none; align-items: center; justify-content: center; opacity: 0; transition: opacity 0.3s; }
+        .modal-overlay.show { opacity: 1; }
+        .modal-content { background: #1E1E1E; padding: 40px; border-radius: 28px; text-align: center; max-width: 90%; width: 380px; box-shadow: 0 10px 30px rgba(0,0,0,0.5); border: 1px solid #333; transform: scale(0.9); transition: transform 0.3s cubic-bezier(0.2, 0.0, 0.2, 1); }
+        .modal-overlay.show .modal-content { transform: scale(1); }
+        .winner-list-item { background: #2C2C2C; margin: 10px 0; padding: 16px; border-radius: 16px; display: flex; justify-content: space-between; font-weight: 700; font-size: 1.1rem; color: white; }
+        .winner-total { color: #81c784; }
+        .close-btn { background: var(--md-sys-color-primary); color: #2a0050; border: none; padding: 12px 30px; border-radius: 50px; font-weight: 800; cursor: pointer; margin-top: 24px; }
+    </style>
+</head>
+<body>
+    <h1>Barnabas' Football Squares</h1>
+    
+    <div id="live-score-pill">LIVE: 0 - 0</div>
+
+    <div id="status">Loading...</div>
+    <div id="snackbar">Notification Message</div>
+
+    <div class="stats-row">
+        <div class="stat-card">
+            <div class="stat-value" id="price-card-display">...</div>
+            <div class="stat-label">Price / Sq</div>
+        </div>
+        <div class="stat-card primary">
+            <div class="stat-value" id="total-pot-display">$0</div>
+            <div class="stat-label">Total Pot</div>
+        </div>
+        <div class="stat-card secondary">
+            <div class="stat-value" id="quarter-payout-display">$0</div>
+            <div class="stat-label">Per Qtr</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value" id="squares-left-display">...</div>
+            <div class="stat-label">Left</div>
+        </div>
+    </div>
+
+    <div class="inst-grid">
+        <div class="inst-card"><div class="inst-title">🏆 How to Win</div><div class="inst-text">Winners determined by the <strong>last digit</strong> of each team's score at quarter end.</div></div>
+        <div class="inst-card"><div class="inst-title">➡️ Rollover Rule</div><div class="inst-text">If winning square is empty, winner is the closest filled square moving right.</div></div>
+        <div class="inst-card"><div class="inst-title">💰 Payouts</div><div class="inst-text">Pot split evenly (25%) per quarter. <br><span class="warn-text">Regulation Only. No OT.</span></div></div>
+        <div class="inst-card"><div class="inst-title">🎲 Numbers</div><div class="inst-text">Randomly generated (0-9) once board is locked.</div></div>
+    </div>
+
+    <div class="payment-card">
+        <div style="font-weight:800; font-size:1.2rem; margin-bottom:5px;">Ready to pay?</div>
+        <div style="color:var(--text-secondary); font-size:0.95rem;">Cash accepted • Venmo preferred</div>
+        <a href="https://account.venmo.com/u/NathanPulse" target="_blank" class="venmo-btn">Pay @NathanPulse</a>
+    </div>
+    
+    <div class="controls-area">
+        <div class="search-container">
+            <input type="text" id="search-input" class="search-input" placeholder="🔍 Find your name..." oninput="handleSearch()">
+        </div>
+        
+        <div class="test-label">Scenario Tester (Auto-Updates)</div>
+        <div class="tester-row">
+            <div>
+                <input type="number" id="test-top" class="test-input" placeholder="Top" oninput="runScenario()">
+            </div>
+            <div style="font-weight:bold; color:#666;">-</div>
+            <div>
+                <input type="number" id="test-left" class="test-input" placeholder="Left" oninput="runScenario()">
+            </div>
+        </div>
+    </div>
+
+    <div class="grid-container" id="capture-target">
+        <div class="grid" id="grid"></div>
+    </div>
+
+    <div id="submit-bar" onclick="submitPicks()">Submit Picks</div>
+
+    <div class="results-section" id="results"></div>
+
+    <div id="celebration-modal" class="modal-overlay">
+        <div class="modal-content">
+            <div style="font-size:3rem; margin-bottom:10px;">🎉</div>
+            <h2 style="margin:0 0 10px 0; color:white;">Game Over!</h2>
+            <div style="color:#CCC; margin-bottom:20px; font-weight:500;">Final Payouts</div>
+            <div id="winner-list"></div>
+            <button class="close-btn" onclick="closeModal()">Close & View Board</button>
+        </div>
+    </div>
+
+    <script>
+        let isLocked = false;
+        let selectedSquares = []; 
+        let globalData = null; 
+        let modalClosed = false; 
+        let celebrationShown = false; 
+
+        async function load() {
+            const res = await fetch('/api/squares');
+            globalData = await res.json(); 
+            isLocked = globalData.isLocked;
+            
+            updateStatusUI();
+            updateStatsUI(globalData);
+            
+            // Set placeholders dynamically
+            if(globalData.teamTop) document.getElementById('test-top').placeholder = globalData.teamTop;
+            if(globalData.teamLeft) document.getElementById('test-left').placeholder = globalData.teamLeft;
+
+            // UPDATE LIVE SCOREBOARD
+            const scorePill = document.getElementById('live-score-pill');
+            if (isLocked && globalData.liveTop !== undefined && globalData.liveLeft !== undefined) {
+                // If scores aren't just '0-0' or empty, show it
+                scorePill.classList.add('active');
+                scorePill.innerText = `LIVE: ${globalData.liveTop} - ${globalData.liveLeft}`;
+            } else {
+                scorePill.classList.remove('active');
+            }
+
+            const winnersInfo = calculateWinners(globalData);
+            renderGrid(globalData, winnersInfo);
+            renderResults(globalData, winnersInfo);
+            
+            handleSearch();
+            runScenario();
+            checkGameOver(globalData, winnersInfo);
+        }
+
+        function runScenario() {
+            document.querySelectorAll('.square').forEach(el => el.classList.remove('test-highlight'));
+            const topVal = document.getElementById('test-top').value;
+            const leftVal = document.getElementById('test-left').value;
+            
+            if(topVal === '' || leftVal === '') return;
+            if(!globalData || !isLocked) return;
+
+            const digitTop = parseInt(topVal.slice(-1));
+            const digitLeft = parseInt(leftVal.slice(-1));
+
+            // Use loose comparison here if headers are strings
+            const c = globalData.topHeaders.findIndex(h => h == digitTop);
+            const r = globalData.leftHeaders.findIndex(h => h == digitLeft);
+
+            if(c === -1 || r === -1) return;
+
+            let winningSquare = null;
+            let searchR = r; let searchC = c;
+            
+            for(let i=0; i<100; i++) {
+                // Loose equality check for finding squares in DB
+                const found = globalData.squares.find(sq => sq.row == searchR && sq.col == searchC);
+                if(found) {
+                    winningSquare = found;
+                    break;
+                }
+                searchC++;
+                if(searchC > 9) { searchC = 0; searchR++; if(searchR > 9) searchR = 0; }
+            }
+
+            if(winningSquare) {
+                const cell = document.querySelector(`.square[data-r="${winningSquare.row}"][data-c="${winningSquare.col}"]`);
+                if(cell) {
+                    cell.classList.add('test-highlight');
+                    cell.scrollIntoView({behavior: "smooth", block: "nearest"});
+                }
+            }
+        }
+
+        function calculateWinners(data) {
+            const results = {};
+            ['q1', 'q2', 'q3', 'final'].forEach(q => {
+                const s = data.scores[q];
+                if(s.top !== '' && s.left !== '') {
+                    const digitTop = parseInt(s.top.slice(-1));
+                    const digitLeft = parseInt(s.left.slice(-1));
+                    
+                    const c = data.topHeaders.findIndex(h => h == digitTop);
+                    const r = data.leftHeaders.findIndex(h => h == digitLeft);
+                    
+                    if(c !== -1 && r !== -1) {
+                        let winningSquare = null;
+                        let searchR = r; let searchC = c;
+                        
+                        for(let i=0; i<100; i++) {
+                            const found = data.squares.find(sq => sq.row == searchR && sq.col == searchC);
+                            if(found) { winningSquare = found; break; }
+                            searchC++; if(searchC > 9) { searchC = 0; searchR++; if(searchR > 9) searchR = 0; }
+                        }
+                        
+                        // We store the target coordinates AND the actual winner
+                        results[q] = { target: { r, c }, winner: winningSquare, scores: { top: s.top, left: s.left } };
+                    }
+                }
+            });
+            return results;
+        }
+
+        function renderGrid(data, winnersInfo) {
+            const grid = document.getElementById('grid');
+            grid.innerHTML = '';
+            
+            grid.appendChild(createDiv('cell team-top-bar', data.teamTop, {backgroundColor: data.colorTop}));
+            grid.appendChild(createDiv('cell team-left-bar', data.teamLeft, {backgroundColor: data.colorLeft}));
+            
+            grid.appendChild(createDiv('cell corner-dead', '', {gridRow:'1', gridColumn:'1'}));
+            grid.appendChild(createDiv('cell corner-dead', '', {gridRow:'1', gridColumn:'2'}));
+            grid.appendChild(createDiv('cell corner-dead', '', {gridRow:'2', gridColumn:'1'}));
+            grid.appendChild(createDiv('cell corner-dead', '', {gridRow:'2', gridColumn:'2'}));
+
+            data.topHeaders.forEach(h => grid.appendChild(createDiv('cell header-top', h)));
+
+            for(let r=0; r<10; r++){
+                grid.appendChild(createDiv('cell header-left', data.leftHeaders[r]));
+                for(let c=0; c<10; c++){
+                    const taken = data.squares.find(s=>s.row == r && s.col == c);
+                    let cls = taken ? 'cell square taken' : 'cell square';
+                    const isSelected = selectedSquares.some(s => s.r === r && s.c === c);
+                    if(isSelected) cls += ' selected';
+
+                    let isPhantom = false;
+                    let isWinner = false;
+                    Object.values(winnersInfo).forEach(w => {
+                        if(w.target.r === r && w.target.c === c && (!taken || (w.winner && (w.winner.row != r || w.winner.col != c)))) {
+                            isPhantom = true;
+                        }
+                        if(w.winner && w.winner.row == r && w.winner.col == c) {
+                            isWinner = true;
+                        }
+                    });
+
+                    if(isWinner) cls += ' winner';
+                    else if(isPhantom) cls += ' phantom';
+
+                    if(isLocked && data.liveTop && data.liveLeft) {
+                        const lt = parseInt(data.liveTop.slice(-1));
+                        const ll = parseInt(data.liveLeft.slice(-1));
+                        const gc = data.topHeaders.findIndex(h => h == lt);
+                        const gr = data.leftHeaders.findIndex(h => h == ll);
+                        if(gc === c && gr === r) cls += ' ghost-active';
+                    }
+
+                    const txt = taken ? taken.name : (isPhantom ? 'SCORE' : '');
+                    const div = createDiv(cls, txt);
+                    div.setAttribute('data-r', r);
+                    div.setAttribute('data-c', c);
+                    if(!taken && !isLocked) div.onclick = () => toggleSelect(r, c);
+                    grid.appendChild(div);
+                }
+            }
+        }
+
+        // ... Standard Helpers ...
+        function toggleSelect(r, c) {
+            const idx = selectedSquares.findIndex(s => s.r === r && s.c === c);
+            if(idx >= 0) selectedSquares.splice(idx, 1); else selectedSquares.push({r, c});
+            updateUI();
+        }
+
+        function updateUI() {
+            const btn = document.getElementById('submit-bar');
+            if(selectedSquares.length > 0) {
+                btn.style.display = 'block';
+                btn.innerText = `Submit ${selectedSquares.length} Pick${selectedSquares.length > 1 ? 's' : ''}`;
+            } else { btn.style.display = 'none'; }
+            load(); 
+        }
+
+        async function submitPicks() {
+            if(selectedSquares.length === 0) return;
+            const name = prompt(`Enter Name for these ${selectedSquares.length} squares:`);
+            if(!name) return;
+            const res = await fetch('/api/claim-batch', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ squares: selectedSquares, name: name }) });
+            const d = await res.json();
+            if(d.errors > 0) { showSnackbar("⚠️ Some squares were already taken!"); } 
+            else { showSnackbar("✅ Picks Submitted!"); }
+            selectedSquares = []; document.getElementById('submit-bar').style.display = 'none'; load();
+        }
+
+        function renderResults(data, winnersInfo) {
+            const container = document.getElementById('results');
+            container.innerHTML = ''; 
+            ['q1', 'q2', 'q3', 'final'].forEach(q => {
+                const info = winnersInfo[q];
+                if(info) {
+                    let winnerName = info.winner ? info.winner.name : "NO WINNER (Board Empty)";
+                    let rolloverMsg = "";
+                    if(info.winner && (info.winner.row !== info.target.r || info.winner.col !== info.target.c)) {
+                        rolloverMsg = `<span style="font-size:0.75rem; color:#aaa; font-weight:normal;">(Rollover)</span>`;
+                    }
+                    container.innerHTML += `<div class="result-card"><div><span class="quarter-badge">${q.toUpperCase()}</span><span style="margin-left:10px; font-weight:bold;">${info.scores.top} - ${info.scores.left}</span></div><div style="text-align:right;"><div style="font-weight:bold; color:var(--md-sys-color-primary);">🏆 ${winnerName}</div>${rolloverMsg}</div></div>`;
+                }
+            });
+        }
+
+        function showSnackbar(message) {
+            const x = document.getElementById("snackbar");
+            x.innerText = message;
+            x.className = "show";
+            setTimeout(function(){ x.className = x.className.replace("show", ""); }, 3000);
+        }
+
+        function checkGameOver(data, winnersInfo) {
+            const s = data.scores;
+            const isGameOver = (s.q1.top !== '' && s.q2.top !== '' && s.q3.top !== '' && s.final.top !== '');
+            if (isGameOver && !modalClosed && !celebrationShown) { showCelebration(data, winnersInfo); }
+        }
+
+        function showCelebration(data, winnersInfo) {
+            celebrationShown = true; 
+            const modal = document.getElementById('celebration-modal');
+            const list = document.getElementById('winner-list');
+            list.innerHTML = '';
+            const totals = {};
+            const qValue = (data.squares.length * parseFloat(data.cost)) / 4;
+            ['q1', 'q2', 'q3', 'final'].forEach(q => {
+                const w = winnersInfo[q].winner;
+                const name = w ? w.name : "Unclaimed";
+                totals[name] = (totals[name] || 0) + qValue;
+            });
+            Object.keys(totals).forEach(name => {
+                list.innerHTML += `<div class="winner-list-item"><span>${name}</span><span class="winner-total">$${totals[name].toFixed(2)}</span></div>`;
+            });
+            modal.style.display = 'flex';
+            setTimeout(() => modal.classList.add('show'), 10);
+            
+            var duration = 3000;
+            var end = Date.now() + duration;
+            (function frame() {
+                if(typeof confetti === 'function') {
+                    confetti({ particleCount: 5, angle: 60, spread: 55, origin: { x: 0 } });
+                    confetti({ particleCount: 5, angle: 120, spread: 55, origin: { x: 1 } });
+                }
+                if (Date.now() < end) requestAnimationFrame(frame);
+            }());
+        }
+
+        function closeModal() {
+            const modal = document.getElementById('celebration-modal');
+            modal.classList.remove('show');
+            setTimeout(() => modal.style.display = 'none', 500);
+            modalClosed = true; 
+        }
+
+        function updateStatusUI() {
+            const statusEl = document.getElementById('status');
+            if (isLocked) {
+                statusEl.innerText = "Locked • Read Only";
+                statusEl.style.background = "var(--md-sys-color-error)"; 
+                statusEl.style.color = "#3e0000";
+                statusEl.style.border = "none";
+            } else {
+                statusEl.innerText = "Open • Tap to Pick";
+                statusEl.style.background = "#81c784";
+                statusEl.style.color = "#002105";
+                statusEl.style.border = "none";
+            }
+        }
+
+        function updateStatsUI(data) {
+            const takenCount = data.squares.length;
+            const remaining = 100 - takenCount;
+            const totalPot = takenCount * data.cost;
+            const quarterPayout = (totalPot / 4).toFixed(2);
+
+            document.getElementById('price-card-display').innerText = "$" + data.cost;
+            document.getElementById('total-pot-display').innerText = "$" + totalPot;
+            document.getElementById('quarter-payout-display').innerText = "$" + quarterPayout;
+            const leftEl = document.getElementById('squares-left-display');
+            leftEl.innerText = remaining;
+            leftEl.style.color = remaining < 10 ? "var(--md-sys-color-error)" : "white";
+        }
+
+        function handleSearch() {
+            const testTop = document.getElementById('test-top');
+            if(document.activeElement === testTop || document.activeElement === document.getElementById('test-left')) return;
+
+            const query = document.getElementById('search-input').value.toLowerCase().trim();
+            const gridEl = document.getElementById('grid');
+            
+            gridEl.classList.remove('searching');
+            document.querySelectorAll('.square').forEach(el => el.classList.remove('highlight'));
+
+            if (query.length < 2 || !globalData) return; 
+            
+            gridEl.classList.add('searching');
+            const matches = globalData.squares.filter(s => s.name.toLowerCase().includes(query));
+            matches.forEach(m => {
+                const cell = document.querySelector(`.square[data-r="${m.row}"][data-c="${m.col}"]`);
+                if(cell) cell.classList.add('highlight');
+            });
+        }
+
+        function createDiv(cls, txt, styles={}) {
+            const d = document.createElement('div'); d.className = cls; d.innerText = txt;
+            for(let s in styles) d.style[s] = styles[s];
+            return d;
+        }
+
+        setInterval(load, 5000); 
+        load();
+    </script>
+</body>
+</html>
