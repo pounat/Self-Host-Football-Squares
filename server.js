@@ -7,7 +7,7 @@ const db = new sqlite3.Database('./squares.db');
 
 // --- CONFIGURATION ---
 const PORT = 3000;
-const ADMIN_PASSWORD = "squares2026"; 
+const ADMIN_PASSWORD = ""; 
 
 app.use(bodyParser.json());
 app.use(express.static('public')); 
