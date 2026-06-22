@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Squares — Owner Dashboard</title>
+    <style>
+        :root {
+            --bg-color: #121212;
+            --surface-color: #1e1e1e;
+            --primary-text: #e3e3e3;
+            --input-bg: #2d2d2d;
+            --border-color: #444;
+            --radius-lg: 16px;
+            --shadow: 0 4px 12px rgba(0,0,0,0.4);
+        }
+        body {
+            font-family: system-ui, -apple-system, sans-serif;
+            margin: 0; padding: 30px 15px 80px;
+            background: var(--bg-color); color: var(--primary-text); text-align: center;
+        }
+        h1 { font-weight: 800; letter-spacing: -0.5px; color: #fff; margin-bottom: 5px; }
+        .sub { color: #888; margin-bottom: 25px; }
+        h3 { margin-top: 0; border-bottom: 1px solid var(--border-color); padding-bottom: 10px; color: #fff; }
+
+        .panel-box {
+            background: var(--surface-color); padding: 24px;
+            border-radius: var(--radius-lg); margin: 0 auto 20px;
+            max-width: 560px; box-shadow: var(--shadow);
+            border: 1px solid var(--border-color); text-align: left;
+        }
+        .row { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+        .label { min-width: 90px; font-weight: bold; color: #aaa; font-size: 0.9rem; }
+        input {
+            background: var(--input-bg); border: 1px solid var(--border-color);
+            color: white; padding: 9px 12px; border-radius: 8px; font-size: 0.9rem; flex: 1; min-width: 0;
+        }
+        input:focus { outline: 2px solid #008CFF; border-color: transparent; }
+        input.color-picker { flex: 0 0 42px; height: 36px; padding: 0; border: none; border-radius: 6px; }
+        input.cost-in { flex: 0 0 70px; text-align: center; }
+
+        button {
+            padding: 9px 18px; cursor: pointer; background: #008CFF; color: white;
+            border: none; border-radius: 50px; font-weight: 700; font-size: 0.85rem;
+            transition: opacity 0.2s, transform 0.1s; margin: 3px;
+        }
+        button:hover { opacity: 0.9; transform: translateY(-1px); }
+        button.ghost { background: #333; }
+        button.red { background: #ff6b6b; color: #1a0000; }
+        button.small { padding: 6px 12px; font-size: 0.8rem; }
+
+        .warn { background: rgba(251,191,36,0.12); border: 1px solid #fbbf24; color: #fbbf24; padding: 12px; border-radius: 10px; font-size: 0.85rem; margin-bottom: 15px; }
+        .err { color: #ff6b6b; font-size: 0.85rem; min-height: 1.1em; }
+        .muted { color: #666; font-size: 0.85rem; }
+
+        .board-card { background: #252525; border: 1px solid #333; border-radius: 12px; padding: 14px 16px; margin-bottom: 12px; text-align: left; }
+        .board-card .top { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+        .board-card .name { font-weight: 700; color: #fff; font-size: 1.05rem; }
+        .board-card .meta { color: #888; font-size: 0.8rem; }
+        .board-card .actions { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 4px; }
+        .topbar { max-width: 560px; margin: 0 auto 18px; display: flex; justify-content: flex-end; }
+    </style>
+</head>
+<body>
+    <h1>🏈 Squares</h1>
+    <div class="sub">Owner dashboard</div>
+
+    <!-- SET UP (first boot) -->
+    <div class="panel-box" id="setup-view" style="display:none;">
+        <h3>Set your owner password</h3>
+        <p class="muted" style="margin-top:0;">This is the first run. Pick a password to manage every board on this server. Keep it safe — it's how you get back in.</p>
+        <div class="row"><span class="label">Password</span><input id="setup-pass" type="password" placeholder="At least 4 characters"></div>
+        <div class="row"><span class="label">Confirm</span><input id="setup-pass2" type="password" placeholder="Repeat it" onkeyup="if(event.key==='Enter') doSetup()"></div>
+        <div class="err" id="setup-err"></div>
+        <div style="text-align:right;"><button onclick="doSetup()">Set password →</button></div>
+    </div>
+
+    <!-- LOGIN -->
+    <div class="panel-box" id="login-view" style="display:none; max-width:340px;">
+        <h3>Owner login</h3>
+        <div class="row"><span class="label">Password</span><input id="login-pass" type="password" placeholder="Owner password" onkeyup="if(event.key==='Enter') doLogin()"></div>
+        <div class="err" id="login-err"></div>
+        <div style="text-align:right;"><button onclick="doLogin()">Log in →</button></div>
+    </div>
+
+    <!-- DASHBOARD -->
+    <div id="dash-view" style="display:none;">
+        <div class="topbar"><button class="ghost small" onclick="doLogout()">Log out</button></div>
+
+        <div class="panel-box">
+            <h3>New board</h3>
+            <div class="row"><span class="label">Name</span><input id="name" placeholder="Super Bowl Squares"></div>
+            <div class="row"><span class="label">Top team</span><input id="team-top" placeholder="Top" value="Top"><input type="color" id="color-top" class="color-picker" value="#002244"></div>
+            <div class="row"><span class="label">Left team</span><input id="team-left" placeholder="Left" value="Left"><input type="color" id="color-left" class="color-picker" value="#4b92db"></div>
+            <div class="row"><span class="label">$ / square</span><input id="cost" class="cost-in" type="number" value="3"></div>
+            <div class="row"><span class="label">Venmo URL</span><input id="venmo" placeholder="https://venmo.com/... (optional)"></div>
+            <div style="text-align:right;"><button onclick="createBoard()">Create board →</button></div>
+        </div>
+
+        <div class="panel-box">
+            <h3>All boards (<span id="count">0</span>)</h3>
+            <div id="boards"></div>
+        </div>
+    </div>
+
+    <script>
+        const tokenKey = 'ownerToken';
+        const getToken = () => localStorage.getItem(tokenKey) || '';
+        const setToken = (t) => localStorage.setItem(tokenKey, t);
+        const show = (id) => ['setup-view', 'login-view', 'dash-view'].forEach(v => {
+            document.getElementById(v).style.display = (v === id) ? 'block' : 'none';
+        });
+
+        async function init() {
+            const site = await (await fetch('/api/site')).json();
+            if (!site.setup) { show('setup-view'); return; }
+            if (getToken()) {
+                const ok = (await fetch('/api/owner/session', { headers: { 'X-Owner-Token': getToken() } })).ok;
+                if (ok) { show('dash-view'); loadBoards(); return; }
+            }
+            show('login-view');
+        }
+
+        async function doSetup() {
+            const p = document.getElementById('setup-pass').value;
+            const p2 = document.getElementById('setup-pass2').value;
+            const err = document.getElementById('setup-err');
+            err.innerText = '';
+            if (p.length < 4) { err.innerText = 'Password must be at least 4 characters.'; return; }
+            if (p !== p2) { err.innerText = "Passwords don't match."; return; }
+            const res = await fetch('/api/site/setup', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: p }) });
+            if (!res.ok) { err.innerText = (await res.json()).error || 'Setup failed.'; return; }
+            setToken((await res.json()).token);
+            show('dash-view'); loadBoards();
+        }
+
+        async function doLogin() {
+            const p = document.getElementById('login-pass').value;
+            const err = document.getElementById('login-err');
+            err.innerText = '';
+            const res = await fetch('/api/site/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: p }) });
+            if (!res.ok) { err.innerText = (await res.json()).error || 'Login failed.'; return; }
+            setToken((await res.json()).token);
+            show('dash-view'); loadBoards();
+        }
+
+        async function doLogout() {
+            await fetch('/api/site/logout', { method: 'POST', headers: { 'X-Owner-Token': getToken() } });
+            localStorage.removeItem(tokenKey);
+            document.getElementById('login-pass').value = '';
+            show('login-view');
+        }
+
+        async function loadBoards() {
+            const res = await fetch('/api/owner/pools', { headers: { 'X-Owner-Token': getToken() } });
+            if (res.status === 401) { localStorage.removeItem(tokenKey); show('login-view'); return; }
+            const data = await res.json();
+            document.getElementById('count').innerText = data.pools.length;
+            const origin = location.origin;
+            const wrap = document.getElementById('boards');
+            if (!data.pools.length) { wrap.innerHTML = '<p class="muted">No boards yet — create one above.</p>'; return; }
+            wrap.innerHTML = data.pools.map(p => {
+                const share = origin + p.shareUrl;
+                const admin = origin + p.adminUrl;
+                const lockTag = p.locked ? ' • 🔒 locked' : '';
+                return `<div class="board-card">
+                    <div class="top">
+                        <span class="name">${escapeHtml(p.name)}</span>
+                        <span class="meta">${p.filled}/100 filled${lockTag}</span>
+                    </div>
+                    <div class="actions">
+                        <button class="small" onclick="window.open('${share}','_blank')">Open board</button>
+                        <button class="ghost small" onclick="copyText('${share}', this)">Copy board link</button>
+                        <button class="small" onclick="window.open('${admin}','_blank')">Open admin</button>
+                        <button class="ghost small" onclick="copyText('${admin}', this)">Copy admin link</button>
+                        <button class="red small" onclick="deleteBoard('${p.id}', '${escapeJs(p.name)}')">Delete</button>
+                    </div>
+                </div>`;
+            }).join('');
+        }
+
+        async function createBoard() {
+            const body = {
+                name: document.getElementById('name').value.trim(),
+                teamTop: document.getElementById('team-top').value.trim(),
+                teamLeft: document.getElementById('team-left').value.trim(),
+                colorTop: document.getElementById('color-top').value,
+                colorLeft: document.getElementById('color-left').value,
+                cost: document.getElementById('cost').value.trim(),
+                venmoUrl: document.getElementById('venmo').value.trim()
+            };
+            const res = await fetch('/api/owner/pools', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Owner-Token': getToken() }, body: JSON.stringify(body) });
+            if (!res.ok) { alert('Could not create board.'); return; }
+            document.getElementById('name').value = '';
+            loadBoards();
+        }
+
+        async function deleteBoard(id, name) {
+            if (!confirm(`Delete "${name}" and all its squares? This can't be undone.`)) return;
+            await fetch(`/api/owner/pools/${id}`, { method: 'DELETE', headers: { 'X-Owner-Token': getToken() } });
+            loadBoards();
+        }
+
+        function copyText(text, btn) {
+            navigator.clipboard.writeText(text);
+            const old = btn.innerText; btn.innerText = 'Copied ✓';
+            setTimeout(() => { btn.innerText = old; }, 1400);
+        }
+        function escapeHtml(s) { return String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
+        function escapeJs(s) { return String(s).replace(/['\\]/g, '\\$&'); }
+
+        init();
+    </script>
+</body>
+</html>

@@ -1,0 +1,438 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin - Squares</title>
+    <style>
+        /* --- DARK MODERN THEME --- */
+        :root {
+            --bg-color: #121212;
+            --surface-color: #1e1e1e;
+            --primary-text: #e3e3e3;
+            --secondary-text: #c4c7c5;
+            --input-bg: #2d2d2d;
+            --border-color: #444;
+            --radius-md: 12px;
+            --radius-lg: 16px;
+            --shadow: 0 4px 12px rgba(0,0,0,0.4);
+        }
+
+        body { 
+            font-family: system-ui, -apple-system, sans-serif; 
+            margin: 0; padding: 20px; 
+            background: var(--bg-color); 
+            color: var(--primary-text);
+            text-align: center; 
+        }
+
+        h1 { margin-bottom: 20px; font-weight: 800; letter-spacing: -0.5px; }
+        h3 { margin-top: 0; border-bottom: 1px solid var(--border-color); padding-bottom: 10px; color: #fff; }
+
+        .panel-box { 
+            background: var(--surface-color); padding: 20px; 
+            border-radius: var(--radius-lg); margin: 0 auto 20px auto; 
+            max-width: 600px; box-shadow: var(--shadow);
+            border: 1px solid var(--border-color); text-align: left;
+        }
+
+        input { 
+            background: var(--input-bg); border: 1px solid var(--border-color);
+            color: white; padding: 8px 12px; border-radius: 8px; margin: 5px; font-size: 0.9rem;
+        }
+        input:focus { outline: 2px solid #008CFF; border-color: transparent; }
+        input.score-in { width: 40px; text-align: center; }
+        input.cost-in { width: 60px; text-align: center; }
+        input.color-picker { width: 40px; height: 35px; padding: 0; border: none; border-radius: 6px; overflow: hidden; }
+
+        button { 
+            padding: 8px 16px; cursor: pointer; background: #444; color: white; 
+            border: none; border-radius: 50px; font-weight: 600; font-size: 0.85rem;
+            transition: opacity 0.2s, transform 0.1s; margin: 5px;
+        }
+        button:hover { opacity: 0.9; transform: translateY(-1px); }
+        
+        button.primary { background: #008CFF; color: white; } 
+        button.red { background: #ff6b6b; color: #1a0000; }
+        button.green { background: #4ade80; color: #003300; }
+        button.orange { background: #fbbf24; color: #3d2200; }
+        button.yellow { background: #facc15; color: black; }
+
+        /* Mini grid — mobile management surface */
+        #mini-grid { display: grid; grid-template-columns: repeat(11, 30px); gap: 2px; justify-content: center; margin-top: 15px; }
+        #mini-grid .cell { width: 30px; height: 30px; background: #2d2d2d; color: #888; font-size: 10px; display: flex; align-items: center; justify-content: center; cursor: pointer; border-radius: 4px; }
+        #mini-grid .cell:hover { background: #444; color: white; }
+        #mini-grid .cell.taken { background: #2a3c55; color: #fff; border: 1px solid #4a6fa5; }
+        #mini-grid .cell.header { background: #111; color: white; cursor: default; font-weight: bold; }
+
+        /* Two-column desktop layout: controls left, full board right */
+        .admin-layout { display: block; }
+        .admin-board { display: none; }
+        @media (min-width: 1200px) {
+            .admin-layout { display: flex; gap: 24px; align-items: flex-start; justify-content: center; max-width: 1500px; margin: 0 auto; }
+            .admin-controls { flex: 0 0 540px; }
+            .admin-controls .panel-box { max-width: none; }
+            .admin-board { display: block; flex: 1 1 auto; position: sticky; top: 20px; }
+            #mini-wrap { display: none; }
+        }
+
+        /* Full board (desktop right column) — mirrors the player board */
+        .board-scroll { width: 100%; overflow-x: auto; padding: 5px; box-sizing: border-box; }
+        .grid {
+            display: grid;
+            grid-template-columns: 34px 40px repeat(10, 54px);
+            grid-template-rows: 34px 40px repeat(10, 48px);
+            gap: 4px; margin: 0 auto; width: max-content;
+        }
+        .grid .cell {
+            background: var(--surface-color); border-radius: 6px;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 0.78rem; font-weight: 500; position: relative; overflow: hidden;
+            box-shadow: 0 1px 2px rgba(0,0,0,0.5); word-break: break-word; padding: 2px; line-height: 1.1;
+        }
+        .grid .team-top-bar { grid-column: 3 / span 10; grid-row: 1; border-radius: 12px; color: #fff; font-weight: 800; font-size: 1.1rem; letter-spacing: 1px; text-shadow: 0 2px 4px rgba(0,0,0,0.8); }
+        .grid .team-left-bar { grid-column: 1; grid-row: 3 / span 10; border-radius: 12px; color: #fff; font-weight: 800; font-size: 1.1rem; letter-spacing: 1px; writing-mode: vertical-rl; transform: rotate(180deg); text-shadow: 0 2px 4px rgba(0,0,0,0.8); }
+        .grid .header-top, .grid .header-left { background: #2d2d2d; color: #fff; font-weight: 800; font-size: 1rem; border: 1px solid #444; }
+        .grid .corner-dead { background: transparent; box-shadow: none; }
+        .grid .corner-logo { background: #000; color: #888; border-radius: 50%; grid-column: 2; grid-row: 2; font-size: 0.6rem; font-weight: bold; border: 1px solid #333; }
+        .grid .square { cursor: pointer; color: #666; background: #252525; }
+        .grid .square:hover { background: #333; color: #fff; }
+        .grid .square.taken { background: #2a3c55; color: #fff; font-weight: 600; border: 1px solid #3d4f68; }
+        .grid .square.winner { background: #ffd700; color: #000; font-weight: 900; }
+        .grid .square.phantom { background: rgba(255,215,0,0.2); border: 2px dashed #ffd700; color: #ffd700; font-size: 0.6rem; }
+
+        table.stats { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 0.9rem; }
+        table.stats th { text-align: left; color: #888; padding: 8px; border-bottom: 1px solid #444; }
+        table.stats td { padding: 8px; border-bottom: 1px solid #333; color: #eee; }
+        table.stats tr:last-child td { border-bottom: none; font-weight: bold; color: white; }
+
+        .status-badge { cursor: pointer; font-size: 1.1rem; user-select: none; }
+        .status-badge:hover { opacity: 0.7; }
+        .unpaid { color: #ff6b6b; } 
+        .paid { color: #4ade80; }   
+
+        .login-box { 
+            background: var(--surface-color); color: white; max-width: 300px; 
+            margin: 100px auto; padding: 30px; border-radius: var(--radius-lg); 
+            box-shadow: var(--shadow); border: 1px solid var(--border-color);
+        }
+        .row { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+        .label { min-width: 80px; font-weight: bold; color: #aaa; }
+    </style>
+</head>
+<body>
+
+    <div id="login-screen" class="login-box" style="display:none;">
+        <h2>Admin Access</h2>
+        <p style="color:#888; font-size:0.85rem; margin-top:0;">Paste your admin link (or token) to unlock.</p>
+        <input type="text" id="password-input" placeholder="Admin link or token" style="width: 80%; margin-bottom: 15px;" onkeyup="if(event.key === 'Enter') submitToken()">
+        <br>
+        <button class="primary" onclick="submitToken()">Unlock Panel</button>
+    </div>
+
+    <div id="admin-ui" style="display:none;">
+        <h1>Admin Control Panel</h1>
+
+        <div class="admin-layout">
+          <div class="admin-controls">
+
+        <div class="panel-box">
+            <h3>1. Game Status</h3>
+            <div style="text-align:center;">
+                <button id="lock-btn" class="red" onclick="toggleLock(true)">🔒 LOCK GAME</button>
+                <button id="unlock-btn" class="green" onclick="toggleLock(false)">🔓 UNLOCK GAME</button>
+            </div>
+        </div>
+
+        <div class="panel-box">
+            <h3>2. Settings</h3>
+            <div class="row">
+                <span class="label">Cost:</span>
+                <input type="number" id="cost-input" class="cost-in" value="3">
+                <button class="primary" onclick="saveCost()">Set</button>
+            </div>
+            <div class="row">
+                <span class="label">Top Team:</span>
+                <input type="text" id="team-top" style="width:100px;">
+                <input type="color" id="color-top" class="color-picker">
+            </div>
+            <div class="row">
+                <span class="label">Left Team:</span>
+                <input type="text" id="team-left" style="width:100px;">
+                <input type="color" id="color-left" class="color-picker">
+            </div>
+            <div style="text-align:right; margin-top:10px;">
+                <button class="green" onclick="saveTeams()">💾 Save Teams</button>
+            </div>
+        </div>
+
+        <div class="panel-box">
+            <h3>3. Game Scores</h3>
+            <table style="width:100%; color:white;">
+                <tr><td></td><td style="color:#aaa; font-size:0.8rem;">TOP</td><td style="color:#aaa; font-size:0.8rem;">LEFT</td></tr>
+                <tr><td>Q1</td><td><input class="score-in" id="s-q1-top"></td><td><input class="score-in" id="s-q1-left"></td></tr>
+                <tr><td>Q2</td><td><input class="score-in" id="s-q2-top"></td><td><input class="score-in" id="s-q2-left"></td></tr>
+                <tr><td>Q3</td><td><input class="score-in" id="s-q3-top"></td><td><input class="score-in" id="s-q3-left"></td></tr>
+                <tr><td>Final</td><td><input class="score-in" id="s-final-top"></td><td><input class="score-in" id="s-final-left"></td></tr>
+            </table>
+            <div style="text-align:right; margin-top:10px;">
+                <button class="green" onclick="saveScores()">💾 Update Scores</button>
+            </div>
+        </div>
+
+        <div class="panel-box">
+            <h3>4. Money & Stats</h3>
+            <div id="stats-container"></div>
+            <div id="payout-info" style="margin-top:15px; padding-top:10px; border-top:1px dashed #555; font-size:0.9rem; color:#888;"></div>
+        </div>
+
+        <div class="panel-box">
+            <h3>5. Grid Management</h3>
+            <div style="text-align:center; margin-bottom:15px;">
+                <button class="orange" onclick="randomize()">🎲 Randomize #s</button>
+                <button class="yellow" onclick="resetHeaders()">❓ Reset to '?'</button>
+            </div>
+            <div id="mini-wrap">
+                <p style="font-size:0.8rem; margin:0; color:#666; text-align:center;">
+                    <span style="color:#4ade80">● Taken</span> (Edit) &nbsp;|&nbsp; <span style="color:#666">● Empty</span> (Assign)
+                </p>
+                <div id="mini-grid"></div>
+            </div>
+            <div style="text-align:center; margin-top:20px; border-top:1px solid #333; padding-top:15px;">
+                <button class="red" onclick="resetBoard()">⚠️ WIPE ALL NAMES</button>
+            </div>
+        </div>
+        
+            <br>
+            <a id="back-link" href="/" style="color:#008CFF; text-decoration:none;">← Back to Public Board</a>
+          </div>
+
+          <div class="admin-board">
+            <div class="board-scroll"><div class="grid" id="full-grid"></div></div>
+          </div>
+        </div>
+    </div>
+
+    <script>
+        const poolId = (location.pathname.match(/^\/p\/([^\/]+)\/admin/) || [])[1];
+        let adminToken = location.hash.replace(/^#/, '');
+
+        if (!poolId) { location.href = '/'; }
+        document.getElementById('back-link').href = `/p/${poolId}`;
+
+        async function tryUnlock() {
+            const res = await fetch(`/api/pool/${poolId}/admin/check`, { headers: { 'X-Admin-Token': adminToken } });
+            if (res.ok) {
+                document.getElementById('login-screen').style.display = 'none';
+                document.getElementById('admin-ui').style.display = 'block';
+                loadAdmin();
+            } else {
+                document.getElementById('login-screen').style.display = 'block';
+                document.getElementById('admin-ui').style.display = 'none';
+            }
+        }
+
+        function submitToken() {
+            const v = document.getElementById('password-input').value.trim();
+            const m = v.match(/#(.+)$/);
+            adminToken = m ? m[1] : v;
+            location.hash = adminToken;
+            tryUnlock();
+        }
+
+        if (adminToken) tryUnlock();
+        else document.getElementById('login-screen').style.display = 'block';
+
+        async function loadAdmin() {
+            const res = await fetch(`/api/pool/${poolId}`);
+            if (res.status === 404) { alert('Pool not found.'); return; }
+            const data = await res.json();
+            
+            document.getElementById('team-top').value = data.teamTop;
+            document.getElementById('color-top').value = data.colorTop;
+            document.getElementById('team-left').value = data.teamLeft;
+            document.getElementById('color-left').value = data.colorLeft;
+            document.getElementById('cost-input').value = data.cost;
+            
+            ['q1','q2','q3','final'].forEach(q => {
+                document.getElementById(`s-${q}-top`).value = data.scores[q].top;
+                document.getElementById(`s-${q}-left`).value = data.scores[q].left;
+            });
+
+            document.getElementById('lock-btn').style.display = data.isLocked ? 'none' : 'inline-block';
+            document.getElementById('unlock-btn').style.display = data.isLocked ? 'inline-block' : 'none';
+
+            renderGrid(data);
+            renderFullBoard(data);
+            renderStats(data.squares, data.cost);
+        }
+
+        function renderGrid(data) {
+            const grid = document.getElementById('mini-grid');
+            grid.innerHTML = ''; 
+            addCell(grid, '', 'header');
+            data.topHeaders.forEach(h => addCell(grid, h, 'header'));
+            for(let r=0; r<10; r++) {
+                addCell(grid, data.leftHeaders[r], 'header'); 
+                for(let c=0; c<10; c++) {
+                    const taken = data.squares.find(s=>s.row===r && s.col===c);
+                    const div = document.createElement('div');
+                    if(taken) {
+                        div.className = 'cell taken';
+                        div.innerText = taken.name.substring(0,2);
+                        div.title = taken.name;
+                        div.onclick = () => handleEdit(r, c, taken.name);
+                    } else {
+                        div.className = 'cell';
+                        div.onclick = () => forceAssign(r, c);
+                    }
+                    grid.appendChild(div);
+                }
+            }
+        }
+
+        function renderFullBoard(data) {
+            const grid = document.getElementById('full-grid');
+            if (!grid) return;
+            grid.innerHTML = '';
+            const mk = (cls, txt, styles = {}) => {
+                const d = document.createElement('div');
+                d.className = cls; d.innerText = txt;
+                for (const s in styles) d.style[s] = styles[s];
+                return d;
+            };
+            grid.appendChild(mk('cell team-top-bar', data.teamTop, { backgroundColor: data.colorTop }));
+            grid.appendChild(mk('cell team-left-bar', data.teamLeft, { backgroundColor: data.colorLeft }));
+            grid.appendChild(mk('cell corner-dead', '', { gridRow: '1', gridColumn: '1' }));
+            grid.appendChild(mk('cell corner-dead', '', { gridRow: '1', gridColumn: '2' }));
+            grid.appendChild(mk('cell corner-dead', '', { gridRow: '2', gridColumn: '1' }));
+            grid.appendChild(mk('cell corner-logo', 'SB'));
+            data.topHeaders.forEach(h => grid.appendChild(mk('cell header-top', h)));
+
+            const winners = data.winners || {};
+            for (let r = 0; r < 10; r++) {
+                grid.appendChild(mk('cell header-left', data.leftHeaders[r]));
+                for (let c = 0; c < 10; c++) {
+                    const taken = data.squares.find(s => s.row === r && s.col === c);
+                    let cls = taken ? 'cell square taken' : 'cell square';
+                    let isWinner = false, isPhantom = false;
+                    Object.values(winners).forEach(w => {
+                        if (w.winner && w.winner.r === r && w.winner.c === c) isWinner = true;
+                        if (w.target.r === r && w.target.c === c && w.winner && (w.winner.r !== r || w.winner.c !== c)) isPhantom = true;
+                    });
+                    if (isWinner) cls += ' winner';
+                    else if (isPhantom) cls += ' phantom';
+                    const txt = taken ? taken.name : (isPhantom ? 'SCORE' : '');
+                    const div = mk(cls, txt);
+                    if (taken) { div.title = taken.name; div.onclick = () => handleEdit(r, c, taken.name); }
+                    else { div.onclick = () => forceAssign(r, c); }
+                    grid.appendChild(div);
+                }
+            }
+        }
+
+        function renderStats(squares, cost) {
+            const counts = {};
+            const paidStatus = {};
+            squares.forEach(s => {
+                counts[s.name] = (counts[s.name] || 0) + 1;
+                if (paidStatus[s.name] === undefined) paidStatus[s.name] = true;
+                if (s.is_paid !== 1) paidStatus[s.name] = false;
+            });
+            
+            let html = `<table class="stats"><tr><th>Name</th><th>Count</th><th>Owes ($${cost})</th><th>Paid?</th></tr>`;
+            let totalSq = 0;
+            
+            Object.keys(counts).sort().forEach(name => {
+                const num = counts[name];
+                const isPaid = paidStatus[name];
+                const badge = isPaid ? '✅' : '❌';
+                const badgeClass = isPaid ? 'paid' : 'unpaid';
+                
+                // SAFE ESCAPING for the onclick event
+                const safeName = name.replace(/'/g, "\\'"); 
+                
+                totalSq += num;
+                html += `<tr>
+                    <td>${name}</td>
+                    <td>${num}</td>
+                    <td>$${num * cost}</td>
+                    <td><span class="status-badge ${badgeClass}" onclick="togglePay('${safeName}')">${badge}</span></td>
+                </tr>`;
+            });
+            const totalMoney = totalSq * cost;
+            html += `<tr><td><strong>TOTAL</strong></td><td><strong>${totalSq} / 100</strong></td><td><strong>$${totalMoney}</strong></td><td>-</td></tr></table>`;
+            document.getElementById('stats-container').innerHTML = html;
+            
+            const qPay = (totalMoney / 4).toFixed(2);
+            document.getElementById('payout-info').innerHTML = `
+                <strong>Estimated Payouts (25% split):</strong><br>
+                Q1: $${qPay} &bull; Q2: $${qPay} &bull; Q3: $${qPay} &bull; Final: $${qPay}
+            `;
+        }
+
+        function addCell(c, t, cls) {
+            const d = document.createElement('div'); d.className='cell '+cls; d.innerText=t; c.appendChild(d);
+        }
+
+        async function togglePay(name) {
+            await apiCall('toggle-pay', { name });
+        }
+
+        async function handleEdit(r, c, oldName) {
+            const newName = prompt("Edit Name (Clear to delete):", oldName);
+            if (newName === null) return;
+            if (newName.trim() === "") { if(confirm("Delete?")) await apiCall('clear', { row:r, col:c }); }
+            else { await apiCall('rename', { row:r, col:c, name: newName }); }
+        }
+
+        async function forceAssign(r, c) {
+            const name = prompt("Assign to:");
+            if(name) await apiCall('assign', { row:r, col:c, name });
+        }
+
+        async function saveCost() {
+            const cost = document.getElementById('cost-input').value;
+            await apiCall('settings', { cost });
+            alert("Cost Updated");
+        }
+
+        async function saveScores() {
+            const scores = {};
+            ['q1','q2','q3','final'].forEach(q => {
+                scores[q] = {
+                    top: document.getElementById(`s-${q}-top`).value,
+                    left: document.getElementById(`s-${q}-left`).value
+                };
+            });
+            await apiCall('scores', scores);
+            alert("Scores Updated");
+        }
+
+        async function saveTeams() {
+            const teamTop = document.getElementById('team-top').value;
+            const colorTop = document.getElementById('color-top').value;
+            const teamLeft = document.getElementById('team-left').value;
+            const colorLeft = document.getElementById('color-left').value;
+            await apiCall('teams', { teamTop, colorTop, teamLeft, colorLeft });
+            alert("Teams Saved");
+        }
+
+        async function apiCall(action, body) {
+            const res = await fetch(`/api/pool/${poolId}/admin/${action}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-Admin-Token': adminToken },
+                body: JSON.stringify(body)
+            });
+            if (res.status === 401) { alert('Unauthorized — check your admin link.'); return; }
+            loadAdmin();
+        }
+
+        async function toggleLock(l) { await apiCall('lock', {locked:l}); }
+        async function randomize() { if(confirm("Randomize #s?")) await apiCall('randomize', {}); }
+        async function resetHeaders() { if(confirm("Reset #s to ?")) await apiCall('clear-headers', {}); }
+        async function resetBoard() { if(prompt("Type RESET")==='RESET') await apiCall('reset-board', {}); }
+
+    </script>
+</body>
+</html>

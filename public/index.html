@@ -1,0 +1,425 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Super Bowl Squares</title>
+    <style>
+        /* --- DARK MODE THEME --- */
+        :root {
+            --bg-color: #121212;
+            --surface-color: #1e1e1e;
+            --primary-text: #e3e3e3;
+            --secondary-text: #c4c7c5;
+            --gap-size: 4px;
+            --radius-sm: 6px;
+            --radius-md: 12px;
+            --radius-lg: 16px;
+            --header-offset: 55px;
+        }
+
+        body { 
+            font-family: system-ui, -apple-system, sans-serif; 
+            margin: 0; padding: 20px 10px 80px 10px;
+            background: var(--bg-color); text-align: center; color: var(--primary-text);
+        }
+
+        h1 { margin: 10px 0 5px; font-weight: 800; letter-spacing: -0.5px; color: #fff; }
+        
+        #status {
+            display: inline-block; padding: 6px 16px; border-radius: 50px;
+            font-size: 0.85rem; font-weight: 700; letter-spacing: 0.5px;
+            margin-bottom: 15px; box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+            background: #333; text-transform: uppercase;
+        }
+
+        .pay-box {
+            background: #2a2a2a; border: 1px solid #444; padding: 20px;
+            border-radius: var(--radius-lg); margin: 0 auto 20px auto;
+            max-width: 450px; text-align: left;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+        }
+        .pay-box h3 { margin: 0 0 10px 0; color: white; font-size: 1.1rem; border-bottom: 1px solid #444; padding-bottom: 8px; }
+        .rules-list { margin: 0; padding: 0 0 0 20px; color: #ccc; font-size: 0.9rem; line-height: 1.6; }
+        .rules-list li { margin-bottom: 8px; }
+        
+        .venmo-area { margin-top: 15px; padding-top: 15px; border-top: 1px dashed #444; text-align: center; }
+        .venmo-btn {
+            display: inline-block; background: #008CFF; color: white;
+            text-decoration: none; font-weight: bold; padding: 10px 20px;
+            border-radius: 50px; margin-top: 8px; font-size: 0.9rem;
+            transition: opacity 0.2s;
+        }
+        .venmo-btn:hover { opacity: 0.9; }
+
+        .counter-pill {
+            background: #333; color: #fff; padding: 5px 12px;
+            border-radius: 12px; font-size: 0.9rem; display: inline-block; margin-bottom: 15px;
+        }
+
+        .grid-container {
+            max-width: 100%; margin: 0 auto; padding: 5px;
+            overflow-x: auto; overflow-y: visible;
+            scrollbar-width: thin; scrollbar-color: #555 #121212;
+        }
+
+        .toolbar-btn {
+            background: #2a2a2a; color: #ddd; border: 1px solid #444;
+            padding: 8px 16px; border-radius: 50px; font-size: 0.85rem; font-weight: 600;
+            cursor: pointer; margin-bottom: 12px;
+        }
+        .toolbar-btn:hover { background: #333; }
+
+        .grid {
+            display: grid;
+            grid-template-columns: 50px 50px repeat(10, 70px);
+            grid-template-rows: 50px 50px repeat(10, 60px);
+            gap: var(--gap-size); width: max-content; margin: 0 auto;
+        }
+        @media (max-width: 600px) {
+            .grid { grid-template-columns: 35px 40px repeat(10, 60px); grid-template-rows: 40px 40px repeat(10, 50px); }
+            body { padding: 10px 5px 80px 5px; } h1 { font-size: 1.5rem; } :root { --header-offset: 45px; }
+        }
+
+        .cell { 
+            background: var(--surface-color); border-radius: var(--radius-sm);
+            display: flex; align-items: center; justify-content: center; 
+            font-size: 0.9rem; font-weight: 500; position: relative; 
+            box-shadow: 0 1px 2px rgba(0,0,0,0.5); overflow: hidden; 
+            word-break: break-word; padding: 2px; line-height: 1.1;
+        }
+
+        .team-top-bar { 
+            grid-column: 3 / span 10; grid-row: 1; border-radius: var(--radius-lg);
+            color: white; font-weight: 800; font-size: 1.5rem; letter-spacing: 1px;
+            position: sticky; top: 0; z-index: 20; box-shadow: 0 4px 8px rgba(0,0,0,0.6);
+            text-shadow: 0 2px 4px rgba(0,0,0,0.8);
+        }
+        .team-left-bar { 
+            grid-column: 1; grid-row: 3 / span 10; border-radius: var(--radius-lg);
+            color: white; font-weight: 800; font-size: 1.5rem; letter-spacing: 1px;
+            position: sticky; left: 0; z-index: 20; writing-mode: vertical-rl; transform: rotate(180deg); 
+            box-shadow: 0 4px 8px rgba(0,0,0,0.6); text-shadow: 0 2px 4px rgba(0,0,0,0.8);
+        }
+        .header-top { 
+            background: #2d2d2d; color: #fff; font-weight: 800; font-size: 1.2rem; 
+            position: sticky; top: var(--header-offset); z-index: 10; 
+            border-radius: var(--radius-sm); border: 1px solid #444;
+        }
+        .header-left { 
+            background: #2d2d2d; color: #fff; font-weight: 800; font-size: 1.2rem; 
+            position: sticky; left: var(--header-offset); z-index: 11; 
+            border-radius: var(--radius-sm); border: 1px solid #444;
+        }
+        @media (max-width: 600px) { .header-left { left: 40px; } }
+
+        .corner-dead { background: transparent; box-shadow: none; pointer-events: none; }
+        .corner-logo { 
+            background: #000; color: #888; border-radius: 50%;
+            grid-column: 2; grid-row: 2; position: sticky; top: var(--header-offset); left: var(--header-offset); 
+            z-index: 25; font-size: 0.7rem; font-weight: bold; border: 1px solid #333;
+        }
+        @media (max-width: 600px) { .corner-logo { left: 40px; } }
+
+        /* SQUARES STATES */
+        .square { cursor: pointer; color: #666; background: #252525; transition: background 0.1s; }
+        .square:hover { transform: scale(0.95); background: #333; color: #fff; }
+        
+        .square.taken { background: #2a3c55; color: #fff; font-weight: 600; cursor: default; border: 1px solid #3d4f68; }
+        .square.taken:hover { transform: none; }
+
+        /* MULTI-SELECT */
+        .square.selected { background: #008CFF; color: white; border: 2px solid white; transform: scale(0.95); z-index: 5; }
+
+        /* WINNER STYLES */
+        @keyframes goldPulse {
+            0% { box-shadow: 0 0 0 0 rgba(255, 215, 0, 0.4); border-color: #ffd700; }
+            50% { box-shadow: 0 0 20px 5px rgba(255, 215, 0, 0.2); border-color: #fff; }
+            100% { box-shadow: 0 0 0 0 rgba(255, 215, 0, 0); border-color: #ffd700; }
+        }
+        .square.winner { 
+            background: #ffd700 !important; color: #000 !important; 
+            font-weight: 900; z-index: 15; animation: goldPulse 2s infinite; 
+        }
+
+        /* PHANTOM WINNER (Empty Score Cell) */
+        .square.phantom {
+            background: rgba(255, 215, 0, 0.2) !important;
+            border: 2px dashed #ffd700;
+            color: #ffd700;
+            font-size: 0.7rem;
+            z-index: 14;
+        }
+        
+        /* RESULTS & PAYOUTS */
+        .results-section { margin-top: 30px; display: flex; flex-direction: column; align-items: center; gap: 10px; }
+        .result-card { 
+            background: #252525; padding: 15px 25px; border-radius: var(--radius-lg); 
+            border: 1px solid #333; width: 90%; max-width: 400px;
+            display: flex; justify-content: space-between; align-items: center;
+        }
+        .quarter-badge { background: #333; color: #aaa; padding: 4px 10px; border-radius: 8px; font-weight: 700; font-size: 0.8rem; }
+
+        /* FLOATING SUBMIT BUTTON */
+        #submit-bar {
+            position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+            background: #008CFF; color: white; padding: 12px 30px;
+            border-radius: 50px; font-weight: bold; font-size: 1.1rem;
+            box-shadow: 0 6px 15px rgba(0,0,0,0.5); cursor: pointer;
+            z-index: 1000; display: none; border: 2px solid #fff;
+            animation: popUp 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+        }
+        @keyframes popUp { from { transform: translate(-50%, 100%); } to { transform: translate(-50%, 0); } }
+    </style>
+</head>
+<body>
+    <h1 id="title">Super Bowl Squares</h1>
+    <div id="status">Loading...</div>
+
+    <div class="pay-box">
+        <h3>How It Works</h3>
+        <ul class="rules-list">
+            <li><strong>Cost:</strong> <span id="price-display">...</span> per square.</li>
+            <li><strong>Winning:</strong> End of every quarter based on the last digit of the score.</li>
+            <li><strong>Rollover Rule:</strong> If the winning square is empty, the winner is the closest filled square moving to the right (like reading).</li>
+            <li><strong>Payouts:</strong> <span id="payout-display">...</span> per quarter (Regulation Only).</li>
+            <li><strong>Numbers:</strong> Randomly generated (0-9) once board is locked.</li>
+        </ul>
+        
+        <div class="venmo-area" id="venmo-area" style="display:none;">
+            <span style="font-size: 0.85rem; color:#888;">Cash accepted • Venmo preferred</span><br>
+            <a href="#" target="_blank" class="venmo-btn" id="venmo-btn">
+                Pay on Venmo
+            </a>
+        </div>
+    </div>
+
+    <div class="counter-pill"><span id="counter">Loading...</span></div>
+
+    <div><button id="fit-btn" class="toolbar-btn" onclick="toggleFit()">⤢ Fit to screen</button></div>
+
+    <div class="grid-container">
+        <div class="grid" id="grid"></div>
+    </div>
+
+    <div id="submit-bar" onclick="submitPicks()">
+        Submit Picks
+    </div>
+
+    <div class="results-section" id="results"></div>
+
+    <script>
+        let isLocked = false;
+        let selectedSquares = [];
+
+        const poolId = (location.pathname.match(/^\/p\/([^\/]+)/) || [])[1];
+        if (!poolId) { location.href = '/'; }
+
+        async function load() {
+            const res = await fetch(`/api/pool/${poolId}`);
+            if (res.status === 404) {
+                document.body.innerHTML = '<h1 style="margin-top:60px;">Pool not found</h1><p style="color:#888;">Check your link, or <a href="/" style="color:#008CFF;">create a new pool</a>.</p>';
+                return;
+            }
+            const data = await res.json();
+            isLocked = data.isLocked;
+
+            document.getElementById('title').innerText = data.name || 'Squares';
+            document.title = data.name || 'Squares';
+
+            const venmoArea = document.getElementById('venmo-area');
+            if (data.venmoUrl) {
+                document.getElementById('venmo-btn').href = data.venmoUrl;
+                venmoArea.style.display = 'block';
+            } else {
+                venmoArea.style.display = 'none';
+            }
+
+            const statusEl = document.getElementById('status');
+            if (isLocked) {
+                statusEl.innerText = "Locked • Read Only";
+                statusEl.style.color = "#ff6b6b"; statusEl.style.border = "1px solid #ff6b6b";
+            } else {
+                statusEl.innerText = "Open • Tap to Pick";
+                statusEl.style.color = "#4ade80"; statusEl.style.border = "1px solid #4ade80";
+            }
+
+            const takenCount = data.squares.length;
+            const totalPot = takenCount * data.cost;
+            const quarterPayout = (totalPot / 4).toFixed(2);
+
+            document.getElementById('price-display').innerText = "$" + data.cost;
+            document.getElementById('payout-display').innerText = "$" + quarterPayout;
+            
+            const remaining = 100 - takenCount;
+            const countEl = document.getElementById('counter');
+            countEl.innerText = remaining + " Squares Left";
+            countEl.style.color = remaining < 10 ? "#ff6b6b" : "#fff";
+
+            // Winners are computed server-side.
+            const winnersInfo = data.winners || {};
+
+            renderGrid(data, winnersInfo);
+            renderResults(data, winnersInfo);
+            applyFit();
+        }
+
+        function renderGrid(data, winnersInfo) {
+            const grid = document.getElementById('grid');
+            grid.innerHTML = '';
+            
+            grid.appendChild(createDiv('cell team-top-bar', data.teamTop, {backgroundColor: data.colorTop}));
+            grid.appendChild(createDiv('cell team-left-bar', data.teamLeft, {backgroundColor: data.colorLeft}));
+            grid.appendChild(createDiv('cell corner-dead', '', {gridRow:'1', gridColumn:'1'}));
+            grid.appendChild(createDiv('cell corner-dead', '', {gridRow:'1', gridColumn:'2'}));
+            grid.appendChild(createDiv('cell corner-dead', '', {gridRow:'2', gridColumn:'1'}));
+            grid.appendChild(createDiv('cell corner-logo', 'SB', {}));
+
+            data.topHeaders.forEach(h => grid.appendChild(createDiv('cell header-top', h)));
+
+            for(let r=0; r<10; r++){
+                grid.appendChild(createDiv('cell header-left', data.leftHeaders[r]));
+                for(let c=0; c<10; c++){
+                    const taken = data.squares.find(s=>s.row===r && s.col===c);
+                    let cls = taken ? 'cell square taken' : 'cell square';
+                    
+                    const isSelected = selectedSquares.some(s => s.r === r && s.c === c);
+                    if(isSelected) cls += ' selected';
+
+                    // Check Winners
+                    let isPhantom = false;
+                    let isWinner = false;
+                    
+                    Object.values(winnersInfo).forEach(w => {
+                        // Is this the exact score coord (but maybe empty)?
+                        if(w.target.r === r && w.target.c === c && (!taken || w.winner.r !== r || w.winner.c !== c)) {
+                            // Only mark as phantom if it's NOT the actual winner (rollover scenario)
+                            // or if it IS the winner but we want to highlight the rollover path?
+                            // Actually, simpler: If this is target, and winner is elsewhere, highlight this.
+                            if(w.winner && (w.winner.r !== r || w.winner.c !== c)) {
+                                isPhantom = true;
+                            }
+                        }
+                        // Is this the actual winner?
+                        if(w.winner && w.winner.r === r && w.winner.c === c) {
+                            isWinner = true;
+                        }
+                    });
+
+                    if(isWinner) cls += ' winner';
+                    else if(isPhantom) cls += ' phantom';
+
+                    const txt = taken ? taken.name : (isPhantom ? 'SCORE' : '');
+                    
+                    const div = createDiv(cls, txt);
+                    if(!taken && !isLocked) div.onclick = () => toggleSelect(r, c);
+                    grid.appendChild(div);
+                }
+            }
+        }
+
+        function toggleSelect(r, c) {
+            const idx = selectedSquares.findIndex(s => s.r === r && s.c === c);
+            if(idx >= 0) selectedSquares.splice(idx, 1);
+            else selectedSquares.push({r, c});
+            updateUI();
+        }
+
+        function updateUI() {
+            const btn = document.getElementById('submit-bar');
+            if(selectedSquares.length > 0) {
+                btn.style.display = 'block';
+                btn.innerText = `Submit ${selectedSquares.length} Pick${selectedSquares.length > 1 ? 's' : ''}`;
+            } else {
+                btn.style.display = 'none';
+            }
+            load(); 
+        }
+
+        async function submitPicks() {
+            if(selectedSquares.length === 0) return;
+            const name = prompt(`Enter Name for these ${selectedSquares.length} squares:`);
+            if(!name) return;
+
+            const res = await fetch(`/api/pool/${poolId}/claim-batch`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ squares: selectedSquares, name: name })
+            });
+            const d = await res.json();
+            if(d.errors > 0) alert("Some squares were already taken!");
+            
+            selectedSquares = []; 
+            document.getElementById('submit-bar').style.display = 'none'; 
+            load();
+        }
+
+        function renderResults(data, winnersInfo) {
+            const container = document.getElementById('results');
+            container.innerHTML = ''; 
+            ['q1', 'q2', 'q3', 'final'].forEach(q => {
+                const info = winnersInfo[q];
+                if(info) {
+                    let winnerName = info.winner ? info.winner.name : "NO WINNER (Board Empty)";
+                    
+                    // Add rollover note if needed
+                    let rolloverMsg = "";
+                    if(info.winner && (info.winner.r !== info.target.r || info.winner.c !== info.target.c)) {
+                        rolloverMsg = `<span style="font-size:0.75rem; color:#aaa; font-weight:normal;">(Rollover from empty square)</span>`;
+                    }
+
+                    container.innerHTML += `
+                        <div class="result-card">
+                            <div>
+                                <span class="quarter-badge">${q.toUpperCase()}</span>
+                                <span style="margin-left:10px; font-weight:bold;">${info.scores.top} - ${info.scores.left}</span>
+                            </div>
+                            <div style="text-align:right;">
+                                <div style="font-weight:bold; color:#ffd700;">🏆 ${winnerName}</div>
+                                ${rolloverMsg}
+                            </div>
+                        </div>`;
+                }
+            });
+        }
+
+        function createDiv(cls, txt, styles={}) {
+            const d = document.createElement('div'); d.className = cls; d.innerText = txt;
+            for(let s in styles) d.style[s] = styles[s];
+            return d;
+        }
+
+        let fitMode = localStorage.getItem('fitMode') === '1';
+        function applyFit() {
+            const container = document.querySelector('.grid-container');
+            const grid = document.getElementById('grid');
+            const btn = document.getElementById('fit-btn');
+            if (!container || !grid) return;
+            if (fitMode) {
+                grid.style.transformOrigin = 'top left';
+                grid.style.transform = 'none';
+                const gw = grid.offsetWidth, gh = grid.offsetHeight;
+                const cw = container.clientWidth - 10;
+                const scale = Math.min(1, cw / gw);
+                grid.style.transform = `scale(${scale})`;
+                container.style.height = (gh * scale) + 'px';
+                container.style.overflowX = 'hidden';
+            } else {
+                grid.style.transform = '';
+                container.style.height = '';
+                container.style.overflowX = '';
+            }
+            if (btn) btn.innerText = fitMode ? '⤢ Actual size' : '⤢ Fit to screen';
+        }
+        function toggleFit() {
+            fitMode = !fitMode;
+            localStorage.setItem('fitMode', fitMode ? '1' : '0');
+            applyFit();
+        }
+        window.addEventListener('resize', applyFit);
+
+        setInterval(load, 5000);
+        load();
+    </script>
+</body>
+</html>
