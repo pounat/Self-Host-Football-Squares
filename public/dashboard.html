@@ -97,6 +97,7 @@
             <div class="row"><span class="label">Venmo URL</span><input id="venmo" placeholder="https://venmo.com/... (optional)"></div>
 
             <div style="border-top:1px solid #333; margin-top:10px; padding-top:12px;">
+                <div id="dg-search">
                 <div class="muted" style="margin-bottom:8px;">Link a real game (optional) to auto-fill teams and colors:</div>
                 <div class="row">
                     <select id="dg-league">
@@ -113,6 +114,7 @@
                     <button class="ghost" onclick="dashFindGames()">Find games</button>
                 </div>
                 <div id="dg-list" style="max-height:180px; overflow-y:auto;"></div>
+                </div>
                 <div id="dg-selected" class="muted" style="margin-top:6px;"></div>
             </div>
 
@@ -249,14 +251,16 @@
 
         function pickDashGame(league, espnId, label) {
             selectedGame = { league, espnId };
-            document.getElementById('dg-selected').innerHTML = `Selected: <strong style="color:#4ade80;">${escapeHtml(label)}</strong> &middot; <a href="#" onclick="clearGame();return false;" style="color:#008CFF;">clear</a>`;
+            document.getElementById('dg-selected').innerHTML = `Selected: <strong style="color:#4ade80;">${escapeHtml(label)}</strong> &middot; <a href="#" onclick="clearGame();return false;" style="color:#008CFF;">change</a>`;
             document.getElementById('dg-list').innerHTML = '';
+            const s = document.getElementById('dg-search'); if (s) s.style.display = 'none';
         }
 
         function clearGame() {
             selectedGame = null;
             const sel = document.getElementById('dg-selected'); if (sel) sel.innerHTML = '';
             const list = document.getElementById('dg-list'); if (list) list.innerHTML = '';
+            const s = document.getElementById('dg-search'); if (s) s.style.display = '';
         }
 
         async function deleteBoard(id, name) {

@@ -69,6 +69,7 @@
             cursor: pointer; margin-bottom: 12px;
         }
         .toolbar-btn:hover { background: #333; }
+        .top-tools { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; margin-bottom: 12px; }
 
         .grid {
             display: grid;
@@ -145,6 +146,19 @@
             font-size: 0.7rem;
             z-index: 14;
         }
+
+        /* Per-period (rotating) numbers */
+        .header-top.multi, .header-left.multi {
+            display: flex; flex-wrap: wrap; align-items: center; justify-content: center;
+            gap: 1px 4px; padding: 1px; line-height: 1;
+        }
+        .pnum { font-size: 0.74rem; font-weight: 800; line-height: 1; }
+        .pwin-badges { position: absolute; top: 1px; left: 1px; display: flex; gap: 1px; z-index: 16; }
+        .pwin-badge { font-size: 0.5rem; font-weight: 900; color: #000; border-radius: 3px; padding: 0 2px; line-height: 1.4; }
+        .square.live-now { outline: 3px solid #fff; outline-offset: -3px; z-index: 13; }
+        .square.live-target { outline: 2px dashed #fff; outline-offset: -2px; color: #fff; font-weight: 900; z-index: 12; }
+        .live-bar { display: none; background: #252525; border: 1px solid #3d4f68; border-radius: 50px; padding: 8px 18px; margin: 0 auto 12px; max-width: max-content; font-size: 0.95rem; font-weight: 600; }
+        .countdown-bar { display: none; background: #252525; border: 1px solid #4ade80; color: #4ade80; border-radius: 50px; padding: 7px 16px; margin: 0 auto 12px; max-width: max-content; font-size: 0.9rem; font-weight: 700; }
         
         /* RESULTS & PAYOUTS */
         .results-section { margin-top: 30px; display: flex; flex-direction: column; align-items: center; gap: 10px; }
@@ -196,30 +210,17 @@
     <h1 id="title">Super Bowl Squares</h1>
     <div id="status">Loading...</div>
 
-    <div class="pay-box">
-        <h3>How It Works</h3>
-        <ul class="rules-list">
-            <li><strong>Cost:</strong> <span id="price-display">...</span> per square.</li>
-            <li><strong>Winning:</strong> Q1, Q2, Q3, and the final score of the game, based on the last digit of each team's score.</li>
-            <li><strong>Rollover Rule:</strong> If the winning square is empty, the winner is the closest filled square moving to the right (like reading).</li>
-            <li><strong>Payouts:</strong> <span id="payout-display">...</span> each for Q1, Q2, Q3, and the final score.</li>
-            <li><strong>Numbers:</strong> <span id="numbers-rule">Randomly generated (0-9) once the board is locked.</span></li>
-            <li><strong>Colors:</strong> claimed squares show blue, turning green once paid.</li>
-        </ul>
-        
-        <div class="venmo-area" id="venmo-area" style="display:none;">
-            <span style="font-size: 0.85rem; color:#888;">Cash accepted • Venmo preferred</span><br>
-            <a href="#" target="_blank" class="venmo-btn" id="venmo-btn">
-                Pay on Venmo
-            </a>
-        </div>
+    <div class="top-tools">
+        <button class="toolbar-btn" onclick="openRules()">📋 Rules &amp; Payouts</button>
+        <button id="fit-btn" class="toolbar-btn" onclick="toggleFit()">⤢ Fit to screen</button>
     </div>
 
     <div class="counter-pill"><span id="counter">Loading...</span></div>
 
     <div id="name-line" style="font-size:0.85rem; color:#aaa; margin-bottom:10px;"></div>
-
-    <div><button id="fit-btn" class="toolbar-btn" onclick="toggleFit()">⤢ Fit to screen</button></div>
+    <div id="period-note" style="font-size:0.85rem; color:#fbbf24; margin-bottom:8px;"></div>
+    <div id="countdown" class="countdown-bar"></div>
+    <div id="live-bar" class="live-bar"></div>
 
     <div class="grid-container">
         <div class="grid" id="grid"></div>
@@ -258,6 +259,27 @@
             <div class="modal-title">Claim <span id="sm-count"></span></div>
             <div class="modal-body" id="sm-body"></div>
             <div id="sm-actions"></div>
+        </div>
+    </div>
+
+    <div id="rules-modal" class="modal-overlay" onclick="if(event.target===this) closeRules()">
+        <div class="modal-card" style="max-width:420px;">
+            <div class="modal-title">How It Works</div>
+            <div class="modal-body">
+                <ul class="rules-list">
+                    <li><strong>Cost:</strong> <span id="price-display">...</span> per square.</li>
+                    <li><strong>Winning:</strong> Q1, Q2, Q3, and the final score of the game, based on the last digit of each team's score.</li>
+                    <li><strong>Rollover Rule:</strong> If the winning square is empty, the winner is the closest filled square moving to the right (like reading).</li>
+                    <li><strong>Payouts:</strong> <span id="payout-display">...</span> each for Q1, Q2, Q3, and the final score.</li>
+                    <li><strong>Numbers:</strong> <span id="numbers-rule">Randomly generated (0-9) once the board is locked.</span></li>
+                    <li><strong>Colors:</strong> claimed squares show blue, turning green once paid.</li>
+                </ul>
+                <div class="venmo-area" id="venmo-area" style="display:none;">
+                    <span style="font-size: 0.85rem; color:#888;">Cash accepted • Venmo preferred</span><br>
+                    <a href="#" target="_blank" class="venmo-btn" id="venmo-btn">Pay on Venmo</a>
+                </div>
+            </div>
+            <button class="modal-close" onclick="closeRules()">Got it</button>
         </div>
     </div>
 
@@ -325,14 +347,37 @@
 
             lastData = data;
             updateNumbersRule(data);
+            updatePeriodNote(data);
+            updateLiveScore(data);
+            updateCountdown();
             updateNameLine();
             if (!welcomeHandled && !localStorage.getItem(seenKey)) { welcomeHandled = true; openWelcome(); }
+        }
+
+        const PERIOD_COLORS = { q1: '#4aa8ff', q2: '#4ade80', q3: '#fbbf24', final: '#ff6b6b', h1: '#4aa8ff', h2: '#fbbf24' };
+        const PERIOD_BADGE = { q1: 'Q1', q2: 'Q2', q3: 'Q3', final: 'F', h1: 'H1', h2: 'H2' };
+        const PERIOD_FULL = { q1: 'Q1', q2: 'Q2', q3: 'Q3', final: 'Final', h1: '1st half', h2: '2nd half' };
+        function slotForClient(mode, period) {
+            if (mode === 'per_quarter') return period;
+            if (mode === 'per_half') return (period === 'q1' || period === 'q2') ? 'h1' : 'h2';
+            return 'all';
+        }
+        function drawnSets(data) {
+            const order = data.numberMode === 'per_quarter' ? ['q1', 'q2', 'q3', 'final'] : data.numberMode === 'per_half' ? ['h1', 'h2'] : [];
+            const ns = data.numberSets || {};
+            return order.filter(s => ns[s]).map(s => [s, ns[s]]);
+        }
+        function makeMultiHeader(cls, sets, axis, i) {
+            const d = document.createElement('div');
+            d.className = 'cell ' + cls + ' multi';
+            d.innerHTML = sets.map(([slot, hdr]) => `<span class="pnum" style="color:${PERIOD_COLORS[slot] || '#fff'}">${hdr[axis][i]}</span>`).join('');
+            return d;
         }
 
         function renderGrid(data, winnersInfo) {
             const grid = document.getElementById('grid');
             grid.innerHTML = '';
-            
+
             const grad = (c1, c2) => `linear-gradient(135deg, ${c1 || '#333'}, ${c2 || c1 || '#333'})`;
             grid.appendChild(createDiv('cell team-top-bar', data.teamTop, {backgroundImage: grad(data.colorTop, data.colorTop2)}));
             grid.appendChild(createDiv('cell team-left-bar', data.teamLeft, {backgroundImage: grad(data.colorLeft, data.colorLeft2)}));
@@ -341,43 +386,57 @@
             grid.appendChild(createDiv('cell corner-dead', '', {gridRow:'2', gridColumn:'1'}));
             grid.appendChild(createDiv('cell corner-dead', '', {gridRow:'2', gridColumn:'2'}));
 
-            data.topHeaders.forEach(h => grid.appendChild(createDiv('cell header-top', h)));
+            const sets = drawnSets(data);
+            const multi = data.numberMode !== 'once' && sets.length > 0;
+
+            for(let c=0; c<10; c++){
+                if(multi) grid.appendChild(makeMultiHeader('header-top', sets, 'top', c));
+                else grid.appendChild(createDiv('cell header-top', data.topHeaders[c]));
+            }
+
+            // square "r,c" -> which payout periods it won
+            const winMap = {};
+            ['q1','q2','q3','final'].forEach(q => {
+                const w = winnersInfo[q];
+                if(w && w.winner) { const k = w.winner.r + ',' + w.winner.c; (winMap[k] = winMap[k] || []).push(q); }
+            });
 
             for(let r=0; r<10; r++){
-                grid.appendChild(createDiv('cell header-left', data.leftHeaders[r]));
+                if(multi) grid.appendChild(makeMultiHeader('header-left', sets, 'left', r));
+                else grid.appendChild(createDiv('cell header-left', data.leftHeaders[r]));
                 for(let c=0; c<10; c++){
                     const taken = data.squares.find(s=>s.row===r && s.col===c);
                     let cls = taken ? ('cell square taken' + (taken.is_paid === 1 ? ' paid' : '')) : 'cell square';
-                    
+
                     const isSelected = selectedSquares.some(s => s.r === r && s.c === c);
                     if(isSelected) cls += ' selected';
 
-                    // Check Winners
                     let isPhantom = false;
                     let isWinner = false;
-                    
                     Object.values(winnersInfo).forEach(w => {
-                        // Is this the exact score coord (but maybe empty)?
                         if(w.target.r === r && w.target.c === c && (!taken || w.winner.r !== r || w.winner.c !== c)) {
-                            // Only mark as phantom if it's NOT the actual winner (rollover scenario)
-                            // or if it IS the winner but we want to highlight the rollover path?
-                            // Actually, simpler: If this is target, and winner is elsewhere, highlight this.
-                            if(w.winner && (w.winner.r !== r || w.winner.c !== c)) {
-                                isPhantom = true;
-                            }
+                            if(w.winner && (w.winner.r !== r || w.winner.c !== c)) isPhantom = true;
                         }
-                        // Is this the actual winner?
-                        if(w.winner && w.winner.r === r && w.winner.c === c) {
-                            isWinner = true;
-                        }
+                        if(w.winner && w.winner.r === r && w.winner.c === c) isWinner = true;
                     });
 
                     if(isWinner) cls += ' winner';
-                    else if(isPhantom) cls += ' phantom';
+                    else if(isPhantom && !multi) cls += ' phantom';
+                    const isLiveWin = data.liveWinner && data.liveWinner.r === r && data.liveWinner.c === c;
+                    const isLiveTarget = data.liveTarget && data.liveTarget.r === r && data.liveTarget.c === c && !isLiveWin;
+                    if(isLiveWin) cls += ' live-now';
+                    else if(isLiveTarget) cls += ' live-target';
 
-                    const txt = taken ? taken.name : (isPhantom ? 'SCORE' : '');
-                    
+                    let txt = taken ? taken.name : ((isPhantom && !multi) ? 'SCORE' : '');
+                    if(isLiveTarget && !taken) txt = '↪';
+
                     const div = createDiv(cls, txt);
+                    if(multi && isWinner) {
+                        const badges = document.createElement('div');
+                        badges.className = 'pwin-badges';
+                        badges.innerHTML = (winMap[r + ',' + c] || []).map(q => `<span class="pwin-badge" style="background:${PERIOD_COLORS[slotForClient(data.numberMode, q)]}">${PERIOD_BADGE[q]}</span>`).join('');
+                        div.appendChild(badges);
+                    }
                     if(taken) div.onclick = () => showSquareInfo(r, c, taken, data);
                     else if(!isLocked) div.onclick = () => toggleSelect(r, c);
                     grid.appendChild(div);
@@ -518,7 +577,7 @@
             document.getElementById('sq-modal').classList.add('open');
         }
         function closeSquareInfo() { document.getElementById('sq-modal').classList.remove('open'); }
-        window.addEventListener('keydown', (e) => { if (e.key === 'Escape') { closeSquareInfo(); } });
+        window.addEventListener('keydown', (e) => { if (e.key === 'Escape') { closeSquareInfo(); closeRules(); } });
 
         function updateNumbersRule(data) {
             const el = document.getElementById('numbers-rule');
@@ -526,6 +585,45 @@
             if (data.numberMode === 'per_quarter') el.innerText = 'Re-drawn at the start of every quarter.';
             else if (data.numberMode === 'per_half') el.innerText = 'Re-drawn at halftime.';
             else el.innerText = 'Randomly generated (0-9) once the board is locked, then fixed all game.';
+        }
+        function updateCountdown() {
+            const el = document.getElementById('countdown');
+            if (!el) return;
+            const start = (lastData && lastData.espnStart) ? new Date(lastData.espnStart).getTime() : 0;
+            if (!start || isNaN(start)) { el.style.display = 'none'; return; }
+            const diff = start - Date.now();
+            if (diff <= 0) { el.style.display = 'none'; return; }
+            el.style.display = 'block';
+            let s = Math.floor(diff / 1000);
+            const d = Math.floor(s / 86400); s %= 86400;
+            const h = Math.floor(s / 3600); s %= 3600;
+            const m = Math.floor(s / 60); const sec = s % 60;
+            const pad = n => (n < 10 ? '0' : '') + n;
+            el.innerText = '⏱ Starts in ' + (d ? d + 'd ' : '') + pad(h) + ':' + pad(m) + ':' + pad(sec);
+        }
+
+        function updateLiveScore(data) {
+            const el = document.getElementById('live-bar');
+            if (!el) return;
+            const lv = data.live;
+            if (lv && (lv.state === 'in' || lv.state === 'post')) {
+                el.style.display = 'block';
+                el.innerHTML = `<strong>${escapeHtml(data.teamTop)}</strong> ${lv.top} &nbsp;&middot;&nbsp; <strong>${escapeHtml(data.teamLeft)}</strong> ${lv.left} <span style="color:#888; font-weight:400;">${escapeHtml(lv.statusDetail || '')}</span>`;
+            } else {
+                el.style.display = 'none';
+            }
+        }
+        function updatePeriodNote(data) {
+            const el = document.getElementById('period-note');
+            if (!el) return;
+            const sets = drawnSets(data);
+            if (data.numberMode !== 'once' && sets.length) {
+                const unit = data.numberMode === 'per_half' ? 'half' : 'quarter';
+                el.innerHTML = 'Numbers change each ' + unit + ': ' +
+                    sets.map(([slot]) => `<span style="color:${PERIOD_COLORS[slot]}; font-weight:700;">${PERIOD_FULL[slot]}</span>`).join(' &nbsp; ');
+            } else {
+                el.innerHTML = '';
+            }
         }
         function updateNameLine() {
             const el = document.getElementById('name-line');
@@ -567,6 +665,8 @@
             document.getElementById('welcome').classList.remove('open');
         }
         function escapeHtml(s) { return String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
+        function openRules() { document.getElementById('rules-modal').classList.add('open'); }
+        function closeRules() { document.getElementById('rules-modal').classList.remove('open'); }
 
         function createDiv(cls, txt, styles={}) {
             const d = document.createElement('div'); d.className = cls; d.innerText = txt;
@@ -604,6 +704,7 @@
         window.addEventListener('resize', applyFit);
 
         setInterval(load, 5000);
+        setInterval(updateCountdown, 1000);
         load();
     </script>
 </body>

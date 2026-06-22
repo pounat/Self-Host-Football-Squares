@@ -76,6 +76,14 @@ async function migrate() {
         await migrateToV6();
         await dbRun('PRAGMA user_version = 6');
     }
+    if (user_version < 7) {
+        await migrateToV7();
+        await dbRun('PRAGMA user_version = 7');
+    }
+    if (user_version < 8) {
+        await migrateToV8();
+        await dbRun('PRAGMA user_version = 8');
+    }
 }
 
 async function migrateToV1() {
@@ -212,6 +220,20 @@ async function migrateToV6() {
     if (!cols.some((c) => c.name === 'espn_start')) await dbExec('ALTER TABLE pools ADD COLUMN espn_start TEXT');
 }
 
+async function migrateToV7() {
+    await dbExec(`
+        CREATE TABLE IF NOT EXISTS grid_numbers (
+            pool_id TEXT, slot TEXT, top_headers TEXT, left_headers TEXT,
+            UNIQUE(pool_id, slot)
+        );
+    `);
+}
+
+async function migrateToV8() {
+    const cols = await dbAll('PRAGMA table_info(pools)');
+    if (!cols.some((c) => c.name === 'live_state')) await dbExec('ALTER TABLE pools ADD COLUMN live_state TEXT');
+}
+
 // --- VALIDATION ---
 const isDigit = (n) => Number.isInteger(n) && n >= 0 && n <= 9;
 function cleanName(name) {
@@ -230,7 +252,7 @@ const lastDigit = (v) => {
 // score square is empty, the winner is the next filled square reading
 // left-to-right, top-to-bottom (wrapping). Kept generic so board size and
 // per-period number sets can slot in later.
-function computeWinners(squares, topHeaders, leftHeaders, scores) {
+function computeWinners(squares, scores, mode, slotsMap) {
     const winners = {};
     for (const q of ['q1', 'q2', 'q3', 'final']) {
         const s = scores[q];
@@ -239,9 +261,13 @@ function computeWinners(squares, topHeaders, leftHeaders, scores) {
         const dLeft = lastDigit(s.left);
         if (dTop === null || dLeft === null) continue;
 
+        const hdr = slotsMap[slotFor(mode, q)];
+        if (!hdr) continue; // this period's numbers have not been drawn yet
+        const topHeaders = hdr.top;
+        const leftHeaders = hdr.left;
         const c = topHeaders.indexOf(dTop);
         const r = leftHeaders.indexOf(dLeft);
-        if (c === -1 || r === -1) continue; // numbers not drawn yet
+        if (c === -1 || r === -1) continue;
 
         let searchR = r;
         let searchC = c;
@@ -392,6 +418,7 @@ function parseSummary(sum, espnId) {
         date: comp.date || '',
         state: st.state || 'pre',
         statusDetail: st.shortDetail || st.description || '',
+        period: (comp.status && comp.status.period) || 0,
         home: mk(home),
         away: mk(away),
     };
@@ -453,11 +480,14 @@ async function applyLiveScores(poolId, g) {
     const away = g.away, home = g.home;
     const len = Math.min(away.linescores.length, home.linescores.length);
     const cum = (arr, n) => arr.slice(0, n).reduce((a, b) => a + b, 0);
+    const finalState = g.state === 'post';
+    // A period's payout score is written only once that period is COMPLETE (the
+    // game moved on or finished), so the per-period winner does not flicker mid-quarter.
     const periods = {};
-    if (len >= 1) periods.q1 = { top: String(cum(away.linescores, 1)), left: String(cum(home.linescores, 1)) };
-    if (len >= 2) periods.q2 = { top: String(cum(away.linescores, 2)), left: String(cum(home.linescores, 2)) };
-    if (len >= 3) periods.q3 = { top: String(cum(away.linescores, 3)), left: String(cum(home.linescores, 3)) };
-    if (g.state === 'post') periods.final = { top: away.score, left: home.score };
+    if (len >= 1 && (g.period >= 2 || finalState)) periods.q1 = { top: String(cum(away.linescores, 1)), left: String(cum(home.linescores, 1)) };
+    if (len >= 2 && (g.period >= 3 || finalState)) periods.q2 = { top: String(cum(away.linescores, 2)), left: String(cum(home.linescores, 2)) };
+    if (len >= 3 && (g.period >= 4 || finalState)) periods.q3 = { top: String(cum(away.linescores, 3)), left: String(cum(home.linescores, 3)) };
+    if (finalState) periods.final = { top: away.score, left: home.score };
     for (const q of Object.keys(periods)) {
         const s = periods[q];
         await dbRun(
@@ -466,23 +496,40 @@ async function applyLiveScores(poolId, g) {
             [poolId, q, s.top, s.left]
         );
     }
+    // Current live state for the on-board scoreboard and the "currently winning" highlight.
+    const live = JSON.stringify({ top: away.score, left: home.score, period: g.period, state: g.state, statusDetail: g.statusDetail });
+    await dbRun('UPDATE pools SET live_state = ? WHERE id = ?', [live, poolId]);
 }
 
 async function pollLiveScores() {
     let pools;
     try {
-        pools = await dbAll("SELECT id, espn_league, espn_event_id FROM pools WHERE score_source = 'live' AND espn_event_id IS NOT NULL AND espn_league IS NOT NULL");
+        pools = await dbAll("SELECT id, espn_league, espn_event_id, number_mode, locked FROM pools WHERE score_source = 'live' AND espn_event_id IS NOT NULL AND espn_league IS NOT NULL");
     } catch (e) { return; }
+    if (!pools.length) return;
+    // Fetch each distinct game from ESPN once per tick, then apply to every board using it.
+    const cache = {};
     for (const p of pools) {
         if (!LEAGUES[p.espn_league]) continue;
+        const key = p.espn_league + ':' + p.espn_event_id;
         try {
-            const g = await espnSummary(p.espn_league, p.espn_event_id);
+            if (!(key in cache)) cache[key] = await espnSummary(p.espn_league, p.espn_event_id);
+            const g = cache[key];
+            if (!g) continue;
             await applyLiveScores(p.id, g);
-        } catch (e) { /* skip one pool */ }
+            const mode = p.number_mode || 'once';
+            if (p.locked === 1 && mode !== 'once') await autoAdvanceForPeriod(p.id, mode, g.period);
+        } catch (e) { cache[key] = null; /* skip */ }
     }
 }
 
-// --- Locking + number drawing ---
+// --- Locking + number drawing (with per-period rotation) ---
+const SLOTS = { once: ['all'], per_quarter: ['q1', 'q2', 'q3', 'final'], per_half: ['h1', 'h2'] };
+function slotFor(mode, period) {
+    if (mode === 'per_quarter') return period; // q1, q2, q3, final
+    if (mode === 'per_half') return (period === 'q1' || period === 'q2') ? 'h1' : 'h2';
+    return 'all';
+}
 function shuffle10() {
     const arr = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9];
     for (let i = arr.length - 1; i > 0; i--) {
@@ -491,18 +538,52 @@ function shuffle10() {
     }
     return arr;
 }
-async function drawNumbers(poolId) {
-    await dbRun('UPDATE pools SET top_headers = ?, left_headers = ? WHERE id = ?',
-        [JSON.stringify(shuffle10()), JSON.stringify(shuffle10()), poolId]);
+// Draw (or re-draw) one slot's numbers and mirror them to the pool's current
+// top/left headers, which are what the board displays.
+async function setSlotNumbers(poolId, slot) {
+    const top = JSON.stringify(shuffle10());
+    const left = JSON.stringify(shuffle10());
+    await dbRun(
+        `INSERT INTO grid_numbers (pool_id, slot, top_headers, left_headers) VALUES (?, ?, ?, ?)
+         ON CONFLICT(pool_id, slot) DO UPDATE SET top_headers = excluded.top_headers, left_headers = excluded.left_headers`,
+        [poolId, slot, top, left]
+    );
+    await dbRun('UPDATE pools SET top_headers = ?, left_headers = ? WHERE id = ?', [top, left, poolId]);
 }
-async function drawNumbersIfNeeded(poolId) {
+async function drawnSlots(poolId) {
+    const rows = await dbAll('SELECT slot FROM grid_numbers WHERE pool_id = ?', [poolId]);
+    return new Set(rows.map((r) => r.slot));
+}
+async function currentSlot(poolId, mode) {
+    const have = await drawnSlots(poolId);
+    const order = SLOTS[mode] || SLOTS.once;
+    let cur = null;
+    for (const s of order) if (have.has(s)) cur = s;
+    return cur;
+}
+async function nextSlot(poolId, mode) {
+    const have = await drawnSlots(poolId);
+    const order = SLOTS[mode] || SLOTS.once;
+    for (const s of order) if (!have.has(s)) return s;
+    return null;
+}
+async function numbersAreDrawn(poolId) {
     const pool = await dbGet('SELECT top_headers FROM pools WHERE id = ?', [poolId]);
     const top = JSON.parse((pool && pool.top_headers) || DEFAULT_HEADERS);
-    const drawn = Array.isArray(top) && top.length === 10 && top.every((n) => typeof n === 'number');
-    if (!drawn) await drawNumbers(poolId);
+    return Array.isArray(top) && top.length === 10 && top.every((n) => typeof n === 'number');
 }
-// Lock a board and draw its numbers (only if they have not been drawn yet, so a
-// re-lock or a second trigger leaves an already-numbered board untouched).
+async function poolMode(poolId) {
+    const pool = await dbGet('SELECT number_mode FROM pools WHERE id = ?', [poolId]);
+    return (pool && pool.number_mode) || 'once';
+}
+// Draw the first period's numbers if nothing has been drawn yet.
+async function drawNumbersIfNeeded(poolId) {
+    if (await numbersAreDrawn(poolId)) return;
+    const mode = await poolMode(poolId);
+    await setSlotNumbers(poolId, SLOTS[mode][0]);
+}
+// Lock a board and draw its numbers (only if not already drawn, so a re-lock or
+// a second trigger leaves an already-numbered board untouched).
 async function lockPoolAndDraw(poolId) {
     await dbRun('UPDATE pools SET locked = 1 WHERE id = ?', [poolId]);
     await drawNumbersIfNeeded(poolId);
@@ -511,7 +592,6 @@ async function maybeAutoLockFull(poolId) {
     const row = await dbGet('SELECT COUNT(*) AS c FROM squares WHERE pool_id = ?', [poolId]);
     if (row && row.c >= 100) await lockPoolAndDraw(poolId);
 }
-// Lock boards whose linked game has reached its start time (admin can still unlock).
 async function autoLockStartedGames() {
     let pools;
     try { pools = await dbAll("SELECT id, espn_start FROM pools WHERE locked = 0 AND espn_start IS NOT NULL"); }
@@ -523,6 +603,47 @@ async function autoLockStartedGames() {
             try { await lockPoolAndDraw(p.id); } catch (e) { /* skip one pool */ }
         }
     }
+}
+// In a rotating mode, draw all period slots up to the live game's current period,
+// and mirror the current slot to the board.
+async function autoAdvanceForPeriod(poolId, mode, espnPeriod) {
+    const order = SLOTS[mode];
+    if (!order || order.length <= 1) return;
+    let count;
+    if (mode === 'per_quarter') count = Math.min(4, Math.max(1, espnPeriod || 1));
+    else count = (espnPeriod >= 3) ? 2 : 1;
+    const have = await drawnSlots(poolId);
+    for (let i = 0; i < count; i++) {
+        if (!have.has(order[i])) await setSlotNumbers(poolId, order[i]);
+    }
+    const cur = order[count - 1];
+    const row = await dbGet('SELECT top_headers, left_headers FROM grid_numbers WHERE pool_id = ? AND slot = ?', [poolId, cur]);
+    if (row) await dbRun('UPDATE pools SET top_headers = ?, left_headers = ? WHERE id = ?', [row.top_headers, row.left_headers, poolId]);
+}
+// Manual equivalent: once a period has a score entered, make sure the next
+// period's numbers are drawn (only on a locked, rotating board).
+async function advanceFromScores(poolId, mode) {
+    if (!SLOTS[mode] || mode === 'once') return;
+    const pool = await dbGet('SELECT locked FROM pools WHERE id = ?', [poolId]);
+    if (!pool || pool.locked !== 1) return;
+    const rows = await dbAll('SELECT period, top_score, left_score FROM scores WHERE pool_id = ?', [poolId]);
+    const sc = {};
+    rows.forEach((r) => { sc[r.period] = { top: r.top_score || '', left: r.left_score || '' }; });
+    let scored = 0;
+    for (const p of ['q1', 'q2', 'q3', 'final']) {
+        const s = sc[p];
+        if (s && s.top !== '' && s.left !== '') scored++;
+        else break;
+    }
+    const order = SLOTS[mode];
+    const slotCount = (mode === 'per_quarter') ? Math.min(order.length, scored + 1) : (scored >= 2 ? 2 : 1);
+    const have = await drawnSlots(poolId);
+    for (let i = 0; i < slotCount; i++) {
+        if (!have.has(order[i])) await setSlotNumbers(poolId, order[i]);
+    }
+    const cur = order[Math.min(slotCount, order.length) - 1];
+    const row = await dbGet('SELECT top_headers, left_headers FROM grid_numbers WHERE pool_id = ? AND slot = ?', [poolId, cur]);
+    if (row) await dbRun('UPDATE pools SET top_headers = ?, left_headers = ? WHERE id = ?', [row.top_headers, row.left_headers, poolId]);
 }
 
 app.use(bodyParser.json());
@@ -654,7 +775,39 @@ app.get('/api/pool/:id', ah(async (req, res) => {
 
     const topHeaders = JSON.parse(pool.top_headers || DEFAULT_HEADERS);
     const leftHeaders = JSON.parse(pool.left_headers || DEFAULT_HEADERS);
-    const winners = computeWinners(squares, topHeaders, leftHeaders, scores);
+    const mode = pool.number_mode || 'once';
+    const gnRows = await dbAll('SELECT slot, top_headers, left_headers FROM grid_numbers WHERE pool_id = ?', [pool.id]);
+    const numberSets = {};
+    gnRows.forEach((gr) => { numberSets[gr.slot] = { top: JSON.parse(gr.top_headers), left: JSON.parse(gr.left_headers) }; });
+    const slotsMap = Object.assign({}, numberSets);
+    if (!slotsMap.all) slotsMap.all = { top: topHeaders, left: leftHeaders };
+    const winners = computeWinners(squares, scores, mode, slotsMap);
+    const slotOrder = SLOTS[mode] || SLOTS.once;
+    let currentPeriod = null;
+    for (const sl of slotOrder) if (slotsMap[sl]) currentPeriod = sl;
+
+    let live = null;
+    try { live = pool.live_state ? JSON.parse(pool.live_state) : null; } catch (e) { live = null; }
+    // Live highlight: liveTarget is the exact square the score points to (current
+    // period numbers); liveWinner is the rolled-over filled square that would win if
+    // the period ended now. When the target is filled, the two are the same cell.
+    let liveTarget = null, liveWinner = null;
+    if (live && (live.state === 'in' || live.state === 'post') && currentPeriod && slotsMap[currentPeriod]) {
+        const dTop = lastDigit(String(live.top));
+        const dLeft = lastDigit(String(live.left));
+        const hdr = slotsMap[currentPeriod];
+        const c0 = (dTop === null) ? -1 : hdr.top.indexOf(dTop);
+        const r0 = (dLeft === null) ? -1 : hdr.left.indexOf(dLeft);
+        if (c0 !== -1 && r0 !== -1) {
+            liveTarget = { r: r0, c: c0 };
+            let sr = r0, sc = c0;
+            for (let i = 0; i < 100; i++) {
+                const f = squares.find((s) => s.row === sr && s.col === sc);
+                if (f) { liveWinner = { r: sr, c: sc }; break; }
+                sc++; if (sc > 9) { sc = 0; sr++; if (sr > 9) sr = 0; }
+            }
+        }
+    }
 
     res.json({
         poolId: pool.id,
@@ -664,6 +817,11 @@ app.get('/api/pool/:id', ah(async (req, res) => {
         topHeaders,
         leftHeaders,
         winners,
+        currentPeriod,
+        numberSets,
+        live,
+        liveTarget,
+        liveWinner,
         teamTop: pool.team_top || 'Top',
         teamLeft: pool.team_left || 'Left',
         colorTop: pool.color_top || '#333',
@@ -818,18 +976,42 @@ app.post('/api/pool/:id/admin/clear', poolAdmin, ah(async (req, res) => {
 }));
 
 app.post('/api/pool/:id/admin/randomize', poolAdmin, ah(async (req, res) => {
-    await drawNumbers(req.params.id);
+    const mode = await poolMode(req.params.id);
+    const slot = (await currentSlot(req.params.id, mode)) || SLOTS[mode][0];
+    await setSlotNumbers(req.params.id, slot);
+    res.json({ success: true });
+}));
+
+// Rotating modes: draw the next period's numbers (becomes the current set).
+app.post('/api/pool/:id/admin/advance-numbers', poolAdmin, ah(async (req, res) => {
+    const mode = await poolMode(req.params.id);
+    const slot = await nextSlot(req.params.id, mode);
+    if (slot) await setSlotNumbers(req.params.id, slot);
+    res.json({ success: true, slot: slot || null });
+}));
+
+app.post('/api/pool/:id/admin/number-mode', poolAdmin, ah(async (req, res) => {
+    const mode = SLOTS[req.body.mode] ? req.body.mode : 'once';
+    await dbRun('UPDATE pools SET number_mode = ? WHERE id = ?', [mode, req.params.id]);
+    // Changing the rotation resets any drawn numbers.
+    await dbRun('DELETE FROM grid_numbers WHERE pool_id = ?', [req.params.id]);
+    await dbRun('UPDATE pools SET top_headers = ?, left_headers = ? WHERE id = ?', [DEFAULT_HEADERS, DEFAULT_HEADERS, req.params.id]);
+    // If the board is already locked, draw the first slot so it is not left blank.
+    const pool = await dbGet('SELECT locked FROM pools WHERE id = ?', [req.params.id]);
+    if (pool && pool.locked === 1) await setSlotNumbers(req.params.id, SLOTS[mode][0]);
     res.json({ success: true });
 }));
 
 app.post('/api/pool/:id/admin/clear-headers', poolAdmin, ah(async (req, res) => {
+    await dbRun('DELETE FROM grid_numbers WHERE pool_id = ?', [req.params.id]);
     await dbRun('UPDATE pools SET top_headers = ?, left_headers = ? WHERE id = ?', [DEFAULT_HEADERS, DEFAULT_HEADERS, req.params.id]);
     res.json({ success: true });
 }));
 
 app.post('/api/pool/:id/admin/reset-board', poolAdmin, ah(async (req, res) => {
     await dbRun('DELETE FROM squares WHERE pool_id = ?', [req.params.id]);
-    await dbRun('UPDATE pools SET locked = 0 WHERE id = ?', [req.params.id]);
+    await dbRun('DELETE FROM grid_numbers WHERE pool_id = ?', [req.params.id]);
+    await dbRun('UPDATE pools SET locked = 0, top_headers = ?, left_headers = ? WHERE id = ?', [DEFAULT_HEADERS, DEFAULT_HEADERS, req.params.id]);
     res.json({ success: true });
 }));
 
@@ -846,10 +1028,12 @@ app.post('/api/pool/:id/admin/settings', poolAdmin, ah(async (req, res) => {
     // Partial update: only touch the fields actually provided.
     const sets = [];
     const vals = [];
+    if (req.body.name !== undefined) { sets.push('name = ?'); vals.push(cleanName(req.body.name) || 'Squares Pool'); }
     if (req.body.cost !== undefined) { sets.push('cost_per_square = ?'); vals.push(String(req.body.cost)); }
     if (req.body.venmoUrl !== undefined) { sets.push('venmo_url = ?'); vals.push(req.body.venmoUrl || null); }
     if (req.body.numberMode !== undefined) { sets.push('number_mode = ?'); vals.push(req.body.numberMode); }
     if (req.body.paymentDeadline !== undefined) { sets.push('payment_deadline = ?'); vals.push(req.body.paymentDeadline || null); }
+    if (req.body.startTime !== undefined) { sets.push('espn_start = ?'); vals.push(req.body.startTime || null); }
     if (!sets.length) return res.json({ success: true });
     vals.push(req.params.id);
     await dbRun(`UPDATE pools SET ${sets.join(', ')} WHERE id = ?`, vals);
@@ -865,6 +1049,8 @@ app.post('/api/pool/:id/admin/scores', poolAdmin, ah(async (req, res) => {
             [req.params.id, q, s.top || '', s.left || '']
         );
     }
+    const mode = await poolMode(req.params.id);
+    if (mode !== 'once') await advanceFromScores(req.params.id, mode);
     res.json({ success: true });
 }));
 
@@ -893,6 +1079,7 @@ app.post('/api/pool/:id/admin/unlink-game', poolAdmin, ah(async (req, res) => {
 migrate()
     .then(() => {
         app.listen(PORT, () => console.log(`Server running at http://localhost:${PORT}`));
-        setInterval(() => { pollLiveScores(); autoLockStartedGames(); }, 60000);
+        setInterval(pollLiveScores, 15000);
+        setInterval(autoLockStartedGames, 30000);
     })
     .catch((e) => { console.error('Migration failed:', e); process.exit(1); });
