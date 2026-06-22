@@ -58,6 +58,8 @@
         button.green { background: #4ade80; color: #003300; }
         button.orange { background: #fbbf24; color: #3d2200; }
         button.yellow { background: #facc15; color: black; }
+        button.small { padding: 5px 12px; font-size: 0.78rem; }
+        select { background: var(--input-bg); border: 1px solid var(--border-color); color: white; padding: 8px 10px; border-radius: 8px; font-size: 0.9rem; }
 
         /* Mini grid: mobile management surface */
         #mini-grid { display: grid; grid-template-columns: repeat(11, 30px); gap: 2px; justify-content: center; margin-top: 15px; }
@@ -166,16 +168,49 @@
             <div class="row">
                 <span class="label">Top Team:</span>
                 <input type="text" id="team-top" style="width:100px;">
-                <input type="color" id="color-top" class="color-picker">
+                <input type="color" id="color-top" class="color-picker" title="Color 1">
+                <input type="color" id="color-top2" class="color-picker" title="Color 2">
             </div>
             <div class="row">
                 <span class="label">Left Team:</span>
                 <input type="text" id="team-left" style="width:100px;">
-                <input type="color" id="color-left" class="color-picker">
+                <input type="color" id="color-left" class="color-picker" title="Color 1">
+                <input type="color" id="color-left2" class="color-picker" title="Color 2">
             </div>
             <div style="text-align:right; margin-top:10px;">
                 <button class="green" onclick="saveTeams()">💾 Save Teams</button>
             </div>
+        </div>
+
+        <div class="panel-box">
+            <h3>Game &amp; Live Scores</h3>
+            <div id="linked-game" style="margin-bottom:12px;"></div>
+            <div class="row">
+                <span class="label">League:</span>
+                <select id="league-select">
+                    <option value="nfl">NFL</option>
+                    <option value="ncaaf">College Football</option>
+                    <option value="nba">NBA</option>
+                    <option value="wnba">WNBA</option>
+                    <option value="ncaab">College Basketball</option>
+                </select>
+            </div>
+            <div class="row">
+                <span class="label">Team:</span>
+                <input type="text" id="game-team" placeholder="e.g. Chiefs (shows their schedule)" style="flex:1; min-width:0;">
+            </div>
+            <div class="row">
+                <span class="label">Or date:</span>
+                <input type="date" id="game-date">
+                <button class="primary" onclick="findGames()">Find games</button>
+            </div>
+            <div id="game-list" style="max-height:220px; overflow-y:auto;"></div>
+            <div class="row" style="margin-top:12px;">
+                <span class="label">Scores:</span>
+                <button id="src-manual" onclick="setSource('manual')">Manual</button>
+                <button id="src-live" onclick="setSource('live')">Live (ESPN)</button>
+            </div>
+            <p style="font-size:0.78rem; color:#666; margin:6px 0 0;">Pick a game to auto-fill team names and colors. Live mode refreshes scores from ESPN every minute.</p>
         </div>
 
         <div class="panel-box">
@@ -280,8 +315,12 @@
                 document.getElementById('color-top').value = data.colorTop;
                 document.getElementById('team-left').value = data.teamLeft;
                 document.getElementById('color-left').value = data.colorLeft;
+                document.getElementById('color-top2').value = data.colorTop2 || data.colorTop;
+                document.getElementById('color-left2').value = data.colorLeft2 || data.colorLeft;
                 document.getElementById('cost-input').value = data.cost;
                 document.getElementById('deadline-input').value = data.paymentDeadline || '';
+                const di = document.getElementById('game-date');
+                if (di && !di.value) di.value = new Date().toISOString().slice(0, 10);
                 ['q1','q2','q3','final'].forEach(q => {
                     document.getElementById(`s-${q}-top`).value = data.scores[q].top;
                     document.getElementById(`s-${q}-left`).value = data.scores[q].left;
@@ -295,6 +334,7 @@
             renderFullBoard(data);
             renderStats(data.squares, data.cost);
             renderLog(data);
+            renderGameStatus(data);
         }
 
         function renderGrid(data) {
@@ -330,8 +370,9 @@
                 for (const s in styles) d.style[s] = styles[s];
                 return d;
             };
-            grid.appendChild(mk('cell team-top-bar', data.teamTop, { backgroundColor: data.colorTop }));
-            grid.appendChild(mk('cell team-left-bar', data.teamLeft, { backgroundColor: data.colorLeft }));
+            const grad = (c1, c2) => `linear-gradient(135deg, ${c1 || '#333'}, ${c2 || c1 || '#333'})`;
+            grid.appendChild(mk('cell team-top-bar', data.teamTop, { backgroundImage: grad(data.colorTop, data.colorTop2) }));
+            grid.appendChild(mk('cell team-left-bar', data.teamLeft, { backgroundImage: grad(data.colorLeft, data.colorLeft2) }));
             grid.appendChild(mk('cell corner-dead', '', { gridRow: '1', gridColumn: '1' }));
             grid.appendChild(mk('cell corner-dead', '', { gridRow: '1', gridColumn: '2' }));
             grid.appendChild(mk('cell corner-dead', '', { gridRow: '2', gridColumn: '1' }));
@@ -510,10 +551,76 @@
         async function saveTeams() {
             const teamTop = document.getElementById('team-top').value;
             const colorTop = document.getElementById('color-top').value;
+            const colorTop2 = document.getElementById('color-top2').value;
             const teamLeft = document.getElementById('team-left').value;
             const colorLeft = document.getElementById('color-left').value;
-            await apiCall('teams', { teamTop, colorTop, teamLeft, colorLeft });
+            const colorLeft2 = document.getElementById('color-left2').value;
+            await apiCall('teams', { teamTop, colorTop, colorTop2, teamLeft, colorLeft, colorLeft2 });
             uiToast('Teams saved');
+        }
+
+        const LEAGUE_LABELS = { nfl: 'NFL', ncaaf: 'College Football', nba: 'NBA', wnba: 'WNBA', ncaab: 'College Basketball' };
+
+        function renderGameStatus(data) {
+            const linked = document.getElementById('linked-game');
+            if (!linked) return;
+            if (data.espnEventId) {
+                const lg = LEAGUE_LABELS[data.espnLeague] || data.espnLeague;
+                const lockLine = data.espnStart
+                    ? `<div style="color:#888; font-size:0.8rem;">${data.isLocked ? 'Board is locked.' : 'Auto-locks at ' + fmtLocal(data.espnStart)}</div>`
+                    : '';
+                linked.innerHTML = `<div style="color:#4ade80; font-size:0.88rem;">Linked: <strong>${escapeHtml(data.teamTop)}</strong> (top) vs <strong>${escapeHtml(data.teamLeft)}</strong> (left) <span style="color:#888;">${lg}</span></div>
+                    ${lockLine}
+                    <button class="small" style="margin-top:6px;" onclick="unlinkGame()">Unlink game</button>`;
+            } else {
+                linked.innerHTML = `<div style="color:#888; font-size:0.85rem;">No game linked. Pick one below to pull teams, colors, and live scores.</div>`;
+            }
+            const live = data.scoreSource === 'live';
+            document.getElementById('src-manual').className = live ? '' : 'primary';
+            document.getElementById('src-live').className = live ? 'primary' : '';
+        }
+
+        function fmtLocal(iso) {
+            if (!iso) return '';
+            const d = new Date(iso);
+            if (isNaN(d)) return '';
+            return d.toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+        }
+
+        async function findGames() {
+            const league = document.getElementById('league-select').value;
+            const team = document.getElementById('game-team').value.trim();
+            const date = (document.getElementById('game-date').value || '').replace(/-/g, '');
+            const list = document.getElementById('game-list');
+            list.innerHTML = '<div style="color:#888; font-size:0.85rem; padding:8px 0;">Loading...</div>';
+            const params = new URLSearchParams({ league });
+            if (team) params.set('team', team); else if (date) params.set('date', date);
+            const res = await fetch(`/api/pool/${poolId}/admin/espn?${params}`, { headers: { 'X-Admin-Token': adminToken } });
+            if (!res.ok) { list.innerHTML = '<div style="color:#ff6b6b; font-size:0.85rem;">Could not load games.</div>'; return; }
+            const d = await res.json();
+            if (!d.games.length) { list.innerHTML = `<div style="color:#888; font-size:0.85rem;">${escapeHtml(d.note || 'No games found.')}</div>`; return; }
+            list.innerHTML = d.games.map(g => `<div style="display:flex; align-items:center; gap:8px; padding:6px 0; border-bottom:1px solid #333;">
+                <button class="small primary" onclick="pickGame('${league}','${g.espnId}')">Set</button>
+                <span style="font-size:0.85rem;">${escapeHtml(g.label)}</span>
+                <span style="color:#888; font-size:0.76rem; margin-left:auto; text-align:right;">${escapeHtml(fmtLocal(g.date))}<br>${escapeHtml(g.status || '')}</span>
+            </div>`).join('');
+        }
+
+        async function pickGame(league, espnId) {
+            const res = await fetch(`/api/pool/${poolId}/admin/set-game`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Admin-Token': adminToken }, body: JSON.stringify({ league, espnId }) });
+            if (!res.ok) { uiAlert('Could not set that game.'); return; }
+            uiToast('Game linked, teams and colors pulled');
+            document.getElementById('game-list').innerHTML = '';
+            loadAdmin();
+        }
+
+        async function setSource(source) {
+            await apiCall('score-source', { source });
+            uiToast(source === 'live' ? 'Live scores on' : 'Manual scores on');
+        }
+
+        async function unlinkGame() {
+            if (await uiConfirm('Unlink this game and switch back to manual scores?', { okText: 'Unlink' })) await apiCall('unlink-game', {});
         }
 
         async function apiCall(action, body) {

@@ -68,6 +68,14 @@ async function migrate() {
         await migrateToV4();
         await dbRun('PRAGMA user_version = 4');
     }
+    if (user_version < 5) {
+        await migrateToV5();
+        await dbRun('PRAGMA user_version = 5');
+    }
+    if (user_version < 6) {
+        await migrateToV6();
+        await dbRun('PRAGMA user_version = 6');
+    }
 }
 
 async function migrateToV1() {
@@ -189,6 +197,21 @@ async function migrateToV4() {
     }
 }
 
+async function migrateToV5() {
+    const cols = await dbAll('PRAGMA table_info(pools)');
+    const has = (n) => cols.some((c) => c.name === n);
+    if (!has('color_top2')) await dbExec('ALTER TABLE pools ADD COLUMN color_top2 TEXT');
+    if (!has('color_left2')) await dbExec('ALTER TABLE pools ADD COLUMN color_left2 TEXT');
+    if (!has('espn_league')) await dbExec('ALTER TABLE pools ADD COLUMN espn_league TEXT');
+    if (!has('espn_event_id')) await dbExec('ALTER TABLE pools ADD COLUMN espn_event_id TEXT');
+    if (!has('score_source')) await dbExec("ALTER TABLE pools ADD COLUMN score_source TEXT DEFAULT 'manual'");
+}
+
+async function migrateToV6() {
+    const cols = await dbAll('PRAGMA table_info(pools)');
+    if (!cols.some((c) => c.name === 'espn_start')) await dbExec('ALTER TABLE pools ADD COLUMN espn_start TEXT');
+}
+
 // --- VALIDATION ---
 const isDigit = (n) => Number.isInteger(n) && n >= 0 && n <= 9;
 function cleanName(name) {
@@ -237,6 +260,269 @@ function computeWinners(squares, topHeaders, leftHeaders, scores) {
         };
     }
     return winners;
+}
+
+// --- ESPN (free public scoreboard API, no key) ---
+const ESPN_BASE = 'https://site.api.espn.com/apis/site/v2/sports';
+const LEAGUES = {
+    nfl: { path: 'football/nfl', label: 'NFL' },
+    ncaaf: { path: 'football/college-football', label: 'College Football' },
+    nba: { path: 'basketball/nba', label: 'NBA' },
+    wnba: { path: 'basketball/wnba', label: 'WNBA' },
+    ncaab: { path: 'basketball/mens-college-basketball', label: 'College Basketball' },
+};
+
+async function espnFetch(url) {
+    const res = await fetch(url, { headers: { Accept: 'application/json' } });
+    if (!res.ok) throw new Error('ESPN responded ' + res.status);
+    return res.json();
+}
+
+function parseCompetitor(c) {
+    const t = c.team || {};
+    return {
+        id: t.id,
+        name: t.displayName || t.name || t.shortDisplayName || 'Team',
+        abbrev: t.abbreviation || '',
+        color: t.color ? '#' + t.color : '',
+        altColor: t.alternateColor ? '#' + t.alternateColor : '',
+        score: c.score != null ? String(c.score) : '0',
+        linescores: Array.isArray(c.linescores) ? c.linescores.map((l) => Number(l.value) || 0) : [],
+    };
+}
+
+function parseEvent(ev) {
+    const comp = (ev.competitions && ev.competitions[0]) || {};
+    const competitors = comp.competitors || [];
+    const home = competitors.find((c) => c.homeAway === 'home') || competitors[0] || {};
+    const away = competitors.find((c) => c.homeAway === 'away') || competitors[1] || {};
+    const st = (comp.status || ev.status || {}).type || {};
+    return {
+        espnId: String(ev.id),
+        name: ev.name || ev.shortName || '',
+        date: ev.date || '',
+        state: st.state || 'pre', // pre | in | post
+        statusDetail: st.shortDetail || st.description || '',
+        home: parseCompetitor(home),
+        away: parseCompetitor(away),
+    };
+}
+
+async function espnScoreboard(league, dates) {
+    const lg = LEAGUES[league];
+    if (!lg) throw new Error('Unknown league');
+    let url = ESPN_BASE + '/' + lg.path + '/scoreboard';
+    if (dates) url += '?dates=' + dates + '&limit=300';
+    const data = await espnFetch(url);
+    return (data.events || []).map(parseEvent);
+}
+
+const teamCache = {};
+async function espnTeams(league) {
+    if (teamCache[league]) return teamCache[league];
+    const lg = LEAGUES[league];
+    if (!lg) throw new Error('Unknown league');
+    const data = await espnFetch(ESPN_BASE + '/' + lg.path + '/teams?limit=1000');
+    const group = (((data.sports || [])[0] || {}).leagues || [])[0] || {};
+    const teams = (group.teams || []).map((t) => ({
+        id: t.team.id,
+        name: t.team.displayName || t.team.name || '',
+        abbrev: t.team.abbreviation || '',
+        location: t.team.location || '',
+        nick: t.team.name || '',
+    }));
+    teamCache[league] = teams;
+    return teams;
+}
+
+function matchTeam(teams, term) {
+    const q = term.toLowerCase();
+    return teams.find((t) => t.abbrev.toLowerCase() === q)
+        || teams.find((t) => (t.name || '').toLowerCase().startsWith(q))
+        || teams.find((t) => (t.location || '').toLowerCase().startsWith(q) || (t.nick || '').toLowerCase().startsWith(q))
+        || teams.find((t) => (t.name || '').toLowerCase().includes(q));
+}
+
+function parseScheduleGame(ev) {
+    const comp = (ev.competitions && ev.competitions[0]) || {};
+    const st = (comp.status && comp.status.type) || {};
+    return {
+        espnId: String(ev.id),
+        label: ev.shortName || ev.name || '',
+        date: ev.date || comp.date || '',
+        status: st.shortDetail || st.description || '',
+        state: st.state || 'pre',
+    };
+}
+
+async function espnSchedule(league, teamId) {
+    const lg = LEAGUES[league];
+    if (!lg) throw new Error('Unknown league');
+    const url = ESPN_BASE + '/' + lg.path + '/teams/' + encodeURIComponent(teamId) + '/schedule';
+    let data = await espnFetch(url);
+    let events = data.events || [];
+    // In the offseason the default schedule can come back empty (esp. college);
+    // fall back to the regular season so a team search still returns games.
+    if (!events.length) {
+        try { data = await espnFetch(url + '?seasontype=2'); events = data.events || []; } catch (e) { /* keep empty */ }
+    }
+    return events.map(parseScheduleGame);
+}
+
+function parseSummary(sum, espnId) {
+    const comp = ((sum.header && sum.header.competitions) || [])[0] || {};
+    const competitors = comp.competitors || [];
+    const st = (comp.status && comp.status.type) || {};
+    const mk = (c) => {
+        const t = (c && c.team) || {};
+        return {
+            id: t.id,
+            name: t.displayName || t.name || 'Team',
+            abbrev: t.abbreviation || '',
+            color: t.color ? '#' + t.color : '',
+            altColor: t.alternateColor ? '#' + t.alternateColor : '',
+            score: c && c.score != null ? String(c.score) : '0',
+            linescores: c && Array.isArray(c.linescores) ? c.linescores.map((l) => Number(l.value != null ? l.value : l.displayValue) || 0) : [],
+        };
+    };
+    const home = competitors.find((c) => c.homeAway === 'home') || competitors[0] || {};
+    const away = competitors.find((c) => c.homeAway === 'away') || competitors[1] || {};
+    return {
+        espnId: String(espnId),
+        date: comp.date || '',
+        state: st.state || 'pre',
+        statusDetail: st.shortDetail || st.description || '',
+        home: mk(home),
+        away: mk(away),
+    };
+}
+
+async function espnSummary(league, espnId) {
+    const lg = LEAGUES[league];
+    if (!lg) throw new Error('Unknown league');
+    const data = await espnFetch(ESPN_BASE + '/' + lg.path + '/summary?event=' + encodeURIComponent(espnId));
+    return parseSummary(data, espnId);
+}
+
+// Shared game search: by team name (the team's schedule, scans ahead) or by date.
+const espnSearch = ah(async (req, res) => {
+    const league = req.query.league;
+    if (!LEAGUES[league]) return res.status(400).json({ error: 'Unknown league' });
+    const team = String(req.query.team || '').trim();
+    const dates = String(req.query.date || '').replace(/[^0-9]/g, '') || undefined;
+    try {
+        let games;
+        if (team) {
+            const teams = await espnTeams(league);
+            const t = matchTeam(teams, team);
+            if (!t) return res.json({ games: [], note: 'No team matched "' + team + '"' });
+            games = await espnSchedule(league, t.id);
+        } else {
+            games = (await espnScoreboard(league, dates)).map((g) => ({
+                espnId: g.espnId,
+                label: (g.away.abbrev || g.away.name) + ' @ ' + (g.home.abbrev || g.home.name),
+                date: g.date, status: g.statusDetail, state: g.state,
+            }));
+        }
+        res.json({ games });
+    } catch (e) {
+        res.status(502).json({ error: 'Could not reach ESPN: ' + e.message });
+    }
+});
+
+// Pull a game's teams, colors, and scores onto a pool, and switch it to live.
+async function linkGameToPool(poolId, league, espnId) {
+    const g = await espnSummary(league, espnId);
+    await dbRun(
+        `UPDATE pools SET team_top = ?, color_top = ?, color_top2 = ?,
+            team_left = ?, color_left = ?, color_left2 = ?,
+            espn_league = ?, espn_event_id = ?, espn_start = ?, score_source = 'live' WHERE id = ?`,
+        [
+            g.away.name, g.away.color || '#333', g.away.altColor || g.away.color || '#555',
+            g.home.name, g.home.color || '#333', g.home.altColor || g.home.color || '#555',
+            league, String(espnId), g.date || null, poolId,
+        ]
+    );
+    await applyLiveScores(poolId, g);
+}
+
+// Write a linked game's scores into the pool. Top axis = away team, left axis =
+// home team. Scores are cumulative per period and only written once a period has
+// a linescore (started/finished), so winners only show for periods that exist.
+async function applyLiveScores(poolId, g) {
+    const away = g.away, home = g.home;
+    const len = Math.min(away.linescores.length, home.linescores.length);
+    const cum = (arr, n) => arr.slice(0, n).reduce((a, b) => a + b, 0);
+    const periods = {};
+    if (len >= 1) periods.q1 = { top: String(cum(away.linescores, 1)), left: String(cum(home.linescores, 1)) };
+    if (len >= 2) periods.q2 = { top: String(cum(away.linescores, 2)), left: String(cum(home.linescores, 2)) };
+    if (len >= 3) periods.q3 = { top: String(cum(away.linescores, 3)), left: String(cum(home.linescores, 3)) };
+    if (g.state === 'post') periods.final = { top: away.score, left: home.score };
+    for (const q of Object.keys(periods)) {
+        const s = periods[q];
+        await dbRun(
+            `INSERT INTO scores (pool_id, period, top_score, left_score) VALUES (?, ?, ?, ?)
+             ON CONFLICT(pool_id, period) DO UPDATE SET top_score = excluded.top_score, left_score = excluded.left_score`,
+            [poolId, q, s.top, s.left]
+        );
+    }
+}
+
+async function pollLiveScores() {
+    let pools;
+    try {
+        pools = await dbAll("SELECT id, espn_league, espn_event_id FROM pools WHERE score_source = 'live' AND espn_event_id IS NOT NULL AND espn_league IS NOT NULL");
+    } catch (e) { return; }
+    for (const p of pools) {
+        if (!LEAGUES[p.espn_league]) continue;
+        try {
+            const g = await espnSummary(p.espn_league, p.espn_event_id);
+            await applyLiveScores(p.id, g);
+        } catch (e) { /* skip one pool */ }
+    }
+}
+
+// --- Locking + number drawing ---
+function shuffle10() {
+    const arr = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9];
+    for (let i = arr.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [arr[i], arr[j]] = [arr[j], arr[i]];
+    }
+    return arr;
+}
+async function drawNumbers(poolId) {
+    await dbRun('UPDATE pools SET top_headers = ?, left_headers = ? WHERE id = ?',
+        [JSON.stringify(shuffle10()), JSON.stringify(shuffle10()), poolId]);
+}
+async function drawNumbersIfNeeded(poolId) {
+    const pool = await dbGet('SELECT top_headers FROM pools WHERE id = ?', [poolId]);
+    const top = JSON.parse((pool && pool.top_headers) || DEFAULT_HEADERS);
+    const drawn = Array.isArray(top) && top.length === 10 && top.every((n) => typeof n === 'number');
+    if (!drawn) await drawNumbers(poolId);
+}
+// Lock a board and draw its numbers (only if they have not been drawn yet, so a
+// re-lock or a second trigger leaves an already-numbered board untouched).
+async function lockPoolAndDraw(poolId) {
+    await dbRun('UPDATE pools SET locked = 1 WHERE id = ?', [poolId]);
+    await drawNumbersIfNeeded(poolId);
+}
+async function maybeAutoLockFull(poolId) {
+    const row = await dbGet('SELECT COUNT(*) AS c FROM squares WHERE pool_id = ?', [poolId]);
+    if (row && row.c >= 100) await lockPoolAndDraw(poolId);
+}
+// Lock boards whose linked game has reached its start time (admin can still unlock).
+async function autoLockStartedGames() {
+    let pools;
+    try { pools = await dbAll("SELECT id, espn_start FROM pools WHERE locked = 0 AND espn_start IS NOT NULL"); }
+    catch (e) { return; }
+    const nowMs = Date.now();
+    for (const p of pools) {
+        const t = new Date(p.espn_start).getTime();
+        if (!isNaN(t) && t <= nowMs) {
+            try { await lockPoolAndDraw(p.id); } catch (e) { /* skip one pool */ }
+        }
+    }
 }
 
 app.use(bodyParser.json());
@@ -323,6 +609,8 @@ app.get('/api/owner/pools', ownerAuth, ah(async (req, res) => {
     });
 }));
 
+app.get('/api/owner/espn', ownerAuth, espnSearch);
+
 app.post('/api/owner/pools', ownerAuth, ah(async (req, res) => {
     const name = cleanName(req.body.name) || 'Squares Pool';
     const id = await uniquePoolId();
@@ -339,6 +627,9 @@ app.post('/api/owner/pools', ownerAuth, ah(async (req, res) => {
             DEFAULT_HEADERS, DEFAULT_HEADERS,
         ]
     );
+    if (req.body.game && LEAGUES[req.body.game.league] && req.body.game.espnId) {
+        try { await linkGameToPool(id, req.body.game.league, req.body.game.espnId); } catch (e) { /* ignore link failure */ }
+    }
     res.json({ id, adminToken, shareUrl: `/p/${id}`, adminUrl: `/p/${id}/admin#${adminToken}` });
 }));
 
@@ -377,6 +668,12 @@ app.get('/api/pool/:id', ah(async (req, res) => {
         teamLeft: pool.team_left || 'Left',
         colorTop: pool.color_top || '#333',
         colorLeft: pool.color_left || '#333',
+        colorTop2: pool.color_top2 || '',
+        colorLeft2: pool.color_left2 || '',
+        espnLeague: pool.espn_league || '',
+        espnEventId: pool.espn_event_id || '',
+        espnStart: pool.espn_start || '',
+        scoreSource: pool.score_source || 'manual',
         cost: pool.cost_per_square || '0',
         venmoUrl: pool.venmo_url || '',
         paymentDeadline: pool.payment_deadline || '',
@@ -400,6 +697,7 @@ app.post('/api/pool/:id/claim', ah(async (req, res) => {
     } catch (e) {
         return res.status(400).json({ error: 'Square taken.' });
     }
+    await maybeAutoLockFull(req.params.id);
     res.json({ success: true });
 }));
 
@@ -432,6 +730,7 @@ app.post('/api/pool/:id/claim-batch', ah(async (req, res) => {
         await dbRun('ROLLBACK');
         throw e;
     }
+    await maybeAutoLockFull(req.params.id);
     res.json({ success: true, claimed, errors });
 }));
 
@@ -439,7 +738,8 @@ app.post('/api/pool/:id/claim-batch', ah(async (req, res) => {
 app.get('/api/pool/:id/admin/check', poolAdmin, (req, res) => res.json({ ok: true }));
 
 app.post('/api/pool/:id/admin/lock', poolAdmin, ah(async (req, res) => {
-    await dbRun('UPDATE pools SET locked = ? WHERE id = ?', [req.body.locked ? 1 : 0, req.params.id]);
+    if (req.body.locked) await lockPoolAndDraw(req.params.id);
+    else await dbRun('UPDATE pools SET locked = 0 WHERE id = ?', [req.params.id]);
     res.json({ success: true });
 }));
 
@@ -500,6 +800,7 @@ app.post('/api/pool/:id/admin/assign', poolAdmin, ah(async (req, res) => {
     } catch (e) {
         return res.status(400).json({ error: 'Square taken.' });
     }
+    await maybeAutoLockFull(req.params.id);
     res.json({ success: true });
 }));
 
@@ -517,16 +818,7 @@ app.post('/api/pool/:id/admin/clear', poolAdmin, ah(async (req, res) => {
 }));
 
 app.post('/api/pool/:id/admin/randomize', poolAdmin, ah(async (req, res) => {
-    const shuffle = (arr) => {
-        for (let i = arr.length - 1; i > 0; i--) {
-            const j = Math.floor(Math.random() * (i + 1));
-            [arr[i], arr[j]] = [arr[j], arr[i]];
-        }
-        return arr;
-    };
-    const top = JSON.stringify(shuffle([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]));
-    const left = JSON.stringify(shuffle([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]));
-    await dbRun('UPDATE pools SET top_headers = ?, left_headers = ? WHERE id = ?', [top, left, req.params.id]);
+    await drawNumbers(req.params.id);
     res.json({ success: true });
 }));
 
@@ -542,10 +834,10 @@ app.post('/api/pool/:id/admin/reset-board', poolAdmin, ah(async (req, res) => {
 }));
 
 app.post('/api/pool/:id/admin/teams', poolAdmin, ah(async (req, res) => {
-    const { teamTop, teamLeft, colorTop, colorLeft } = req.body;
+    const { teamTop, teamLeft, colorTop, colorLeft, colorTop2, colorLeft2 } = req.body;
     await dbRun(
-        'UPDATE pools SET team_top = ?, team_left = ?, color_top = ?, color_left = ? WHERE id = ?',
-        [teamTop, teamLeft, colorTop, colorLeft, req.params.id]
+        'UPDATE pools SET team_top = ?, team_left = ?, color_top = ?, color_left = ?, color_top2 = ?, color_left2 = ? WHERE id = ?',
+        [teamTop, teamLeft, colorTop, colorLeft, colorTop2 || null, colorLeft2 || null, req.params.id]
     );
     res.json({ success: true });
 }));
@@ -576,6 +868,31 @@ app.post('/api/pool/:id/admin/scores', poolAdmin, ah(async (req, res) => {
     res.json({ success: true });
 }));
 
+// --- ESPN: find games, link a game, choose score source ---
+app.get('/api/pool/:id/admin/espn', poolAdmin, espnSearch);
+
+app.post('/api/pool/:id/admin/set-game', poolAdmin, ah(async (req, res) => {
+    const { league, espnId } = req.body;
+    if (!LEAGUES[league] || !espnId) return res.status(400).json({ error: 'Invalid game.' });
+    try { await linkGameToPool(req.params.id, league, espnId); }
+    catch (e) { return res.status(502).json({ error: 'Could not reach ESPN: ' + e.message }); }
+    res.json({ success: true });
+}));
+
+app.post('/api/pool/:id/admin/score-source', poolAdmin, ah(async (req, res) => {
+    const source = req.body.source === 'live' ? 'live' : 'manual';
+    await dbRun('UPDATE pools SET score_source = ? WHERE id = ?', [source, req.params.id]);
+    res.json({ success: true });
+}));
+
+app.post('/api/pool/:id/admin/unlink-game', poolAdmin, ah(async (req, res) => {
+    await dbRun("UPDATE pools SET espn_league = NULL, espn_event_id = NULL, espn_start = NULL, score_source = 'manual' WHERE id = ?", [req.params.id]);
+    res.json({ success: true });
+}));
+
 migrate()
-    .then(() => app.listen(PORT, () => console.log(`Server running at http://localhost:${PORT}`)))
+    .then(() => {
+        app.listen(PORT, () => console.log(`Server running at http://localhost:${PORT}`));
+        setInterval(() => { pollLiveScores(); autoLockStartedGames(); }, 60000);
+    })
     .catch((e) => { console.error('Migration failed:', e); process.exit(1); });

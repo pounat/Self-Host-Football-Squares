@@ -333,8 +333,9 @@
             const grid = document.getElementById('grid');
             grid.innerHTML = '';
             
-            grid.appendChild(createDiv('cell team-top-bar', data.teamTop, {backgroundColor: data.colorTop}));
-            grid.appendChild(createDiv('cell team-left-bar', data.teamLeft, {backgroundColor: data.colorLeft}));
+            const grad = (c1, c2) => `linear-gradient(135deg, ${c1 || '#333'}, ${c2 || c1 || '#333'})`;
+            grid.appendChild(createDiv('cell team-top-bar', data.teamTop, {backgroundImage: grad(data.colorTop, data.colorTop2)}));
+            grid.appendChild(createDiv('cell team-left-bar', data.teamLeft, {backgroundImage: grad(data.colorLeft, data.colorLeft2)}));
             grid.appendChild(createDiv('cell corner-dead', '', {gridRow:'1', gridColumn:'1'}));
             grid.appendChild(createDiv('cell corner-dead', '', {gridRow:'1', gridColumn:'2'}));
             grid.appendChild(createDiv('cell corner-dead', '', {gridRow:'2', gridColumn:'1'}));
