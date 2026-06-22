@@ -114,12 +114,6 @@
         @media (max-width: 600px) { .header-left { left: 40px; } }
 
         .corner-dead { background: transparent; box-shadow: none; pointer-events: none; }
-        .corner-logo { 
-            background: #000; color: #888; border-radius: 50%;
-            grid-column: 2; grid-row: 2; position: sticky; top: var(--header-offset); left: var(--header-offset); 
-            z-index: 25; font-size: 0.7rem; font-weight: bold; border: 1px solid #333;
-        }
-        @media (max-width: 600px) { .corner-logo { left: 40px; } }
 
         /* SQUARES STATES */
         .square { cursor: pointer; color: #666; background: #252525; transition: background 0.1s; }
@@ -127,6 +121,7 @@
         
         .square.taken { background: #2a3c55; color: #fff; font-weight: 600; cursor: default; border: 1px solid #3d4f68; }
         .square.taken:hover { transform: none; }
+        .square.paid { background: #1e7a4d; color: #eafff3; border: 1px solid #34c77b; }
 
         /* MULTI-SELECT */
         .square.selected { background: #008CFF; color: white; border: 2px solid white; transform: scale(0.95); z-index: 5; }
@@ -160,6 +155,31 @@
         }
         .quarter-badge { background: #333; color: #aaa; padding: 4px 10px; border-radius: 8px; font-weight: 700; font-size: 0.8rem; }
 
+        /* SQUARE INFO MODAL */
+        .modal-overlay {
+            display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.65);
+            z-index: 2000; align-items: center; justify-content: center; padding: 20px;
+        }
+        .modal-overlay.open { display: flex; }
+        .modal-card {
+            background: var(--surface-color); border: 1px solid #444; border-radius: var(--radius-lg);
+            padding: 22px; max-width: 360px; width: 100%; text-align: left;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.6);
+        }
+        .modal-title { font-size: 1.25rem; font-weight: 800; color: #fff; margin-bottom: 14px; word-break: break-word; }
+        .modal-body { color: #ddd; font-size: 0.92rem; line-height: 1.8; }
+        .modal-body .k { color: #888; }
+        .modal-close {
+            margin-top: 18px; width: 100%; background: #008CFF; color: #fff; border: none;
+            padding: 11px; border-radius: 50px; font-weight: 700; cursor: pointer; font-size: 0.9rem;
+        }
+        .wel-input {
+            width: 100%; box-sizing: border-box; margin-top: 6px;
+            background: #2d2d2d; border: 1px solid #444;
+            color: #fff; padding: 10px 12px; border-radius: 8px; font-size: 0.95rem;
+        }
+        .wel-input:focus { outline: 2px solid #008CFF; border-color: transparent; }
+
         /* FLOATING SUBMIT BUTTON */
         #submit-bar {
             position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
@@ -180,10 +200,11 @@
         <h3>How It Works</h3>
         <ul class="rules-list">
             <li><strong>Cost:</strong> <span id="price-display">...</span> per square.</li>
-            <li><strong>Winning:</strong> End of every quarter based on the last digit of the score.</li>
+            <li><strong>Winning:</strong> Q1, Q2, Q3, and the final score of the game, based on the last digit of each team's score.</li>
             <li><strong>Rollover Rule:</strong> If the winning square is empty, the winner is the closest filled square moving to the right (like reading).</li>
-            <li><strong>Payouts:</strong> <span id="payout-display">...</span> per quarter (Regulation Only).</li>
-            <li><strong>Numbers:</strong> Randomly generated (0-9) once board is locked.</li>
+            <li><strong>Payouts:</strong> <span id="payout-display">...</span> each for Q1, Q2, Q3, and the final score.</li>
+            <li><strong>Numbers:</strong> <span id="numbers-rule">Randomly generated (0-9) once the board is locked.</span></li>
+            <li><strong>Colors:</strong> claimed squares show blue, turning green once paid.</li>
         </ul>
         
         <div class="venmo-area" id="venmo-area" style="display:none;">
@@ -195,6 +216,8 @@
     </div>
 
     <div class="counter-pill"><span id="counter">Loading...</span></div>
+
+    <div id="name-line" style="font-size:0.85rem; color:#aaa; margin-bottom:10px;"></div>
 
     <div><button id="fit-btn" class="toolbar-btn" onclick="toggleFit()">⤢ Fit to screen</button></div>
 
@@ -208,12 +231,49 @@
 
     <div class="results-section" id="results"></div>
 
+    <div id="sq-modal" class="modal-overlay" onclick="if(event.target===this) closeSquareInfo()">
+        <div class="modal-card">
+            <div id="sq-title" class="modal-title"></div>
+            <div id="sq-body" class="modal-body"></div>
+            <button class="modal-close" onclick="closeSquareInfo()">Close</button>
+        </div>
+    </div>
+
+    <div id="welcome" class="modal-overlay">
+        <div class="modal-card" style="max-width:420px;">
+            <div class="modal-title" id="wel-title">Welcome</div>
+            <div class="modal-body" id="wel-rules"></div>
+            <div style="margin-top:16px;">
+                <label style="font-size:0.85rem; color:#aaa;">Your name (shows on squares you claim)</label>
+                <input id="wel-name" class="wel-input" placeholder="e.g. Nathan" onkeyup="if(event.key==='Enter') continueWelcome()">
+                <div id="wel-err" style="color:#ff6b6b; font-size:0.8rem; min-height:1em; margin-top:4px;"></div>
+            </div>
+            <button class="modal-close" onclick="continueWelcome()">Continue →</button>
+            <div style="text-align:center; margin-top:10px;"><a href="#" onclick="skipWelcome();return false;" style="color:#888; font-size:0.8rem;">Just looking →</a></div>
+        </div>
+    </div>
+
+    <div id="submit-modal" class="modal-overlay" onclick="if(event.target===this) closeSubmit()">
+        <div class="modal-card">
+            <div class="modal-title">Claim <span id="sm-count"></span></div>
+            <div class="modal-body" id="sm-body"></div>
+            <div id="sm-actions"></div>
+        </div>
+    </div>
+
     <script>
         let isLocked = false;
         let selectedSquares = [];
 
         const poolId = (location.pathname.match(/^\/p\/([^\/]+)/) || [])[1];
         if (!poolId) { location.href = '/'; }
+
+        const NAME_KEY = 'playerName';
+        const seenKey = 'welcomeSeen:' + poolId;
+        const getName = () => localStorage.getItem(NAME_KEY) || '';
+        const setName = (n) => localStorage.setItem(NAME_KEY, n);
+        let lastData = null;
+        let welcomeHandled = false;
 
         async function load() {
             const res = await fetch(`/api/pool/${poolId}`);
@@ -262,6 +322,11 @@
             renderGrid(data, winnersInfo);
             renderResults(data, winnersInfo);
             applyFit();
+
+            lastData = data;
+            updateNumbersRule(data);
+            updateNameLine();
+            if (!welcomeHandled && !localStorage.getItem(seenKey)) { welcomeHandled = true; openWelcome(); }
         }
 
         function renderGrid(data, winnersInfo) {
@@ -273,7 +338,7 @@
             grid.appendChild(createDiv('cell corner-dead', '', {gridRow:'1', gridColumn:'1'}));
             grid.appendChild(createDiv('cell corner-dead', '', {gridRow:'1', gridColumn:'2'}));
             grid.appendChild(createDiv('cell corner-dead', '', {gridRow:'2', gridColumn:'1'}));
-            grid.appendChild(createDiv('cell corner-logo', 'SB', {}));
+            grid.appendChild(createDiv('cell corner-dead', '', {gridRow:'2', gridColumn:'2'}));
 
             data.topHeaders.forEach(h => grid.appendChild(createDiv('cell header-top', h)));
 
@@ -281,7 +346,7 @@
                 grid.appendChild(createDiv('cell header-left', data.leftHeaders[r]));
                 for(let c=0; c<10; c++){
                     const taken = data.squares.find(s=>s.row===r && s.col===c);
-                    let cls = taken ? 'cell square taken' : 'cell square';
+                    let cls = taken ? ('cell square taken' + (taken.is_paid === 1 ? ' paid' : '')) : 'cell square';
                     
                     const isSelected = selectedSquares.some(s => s.r === r && s.c === c);
                     if(isSelected) cls += ' selected';
@@ -312,7 +377,8 @@
                     const txt = taken ? taken.name : (isPhantom ? 'SCORE' : '');
                     
                     const div = createDiv(cls, txt);
-                    if(!taken && !isLocked) div.onclick = () => toggleSelect(r, c);
+                    if(taken) div.onclick = () => showSquareInfo(r, c, taken, data);
+                    else if(!isLocked) div.onclick = () => toggleSelect(r, c);
                     grid.appendChild(div);
                 }
             }
@@ -328,30 +394,74 @@
         function updateUI() {
             const btn = document.getElementById('submit-bar');
             if(selectedSquares.length > 0) {
+                const cost = lastData ? Number(lastData.cost) : 0;
+                const total = selectedSquares.length * cost;
                 btn.style.display = 'block';
-                btn.innerText = `Submit ${selectedSquares.length} Pick${selectedSquares.length > 1 ? 's' : ''}`;
+                btn.innerText = `Submit ${selectedSquares.length} Pick${selectedSquares.length > 1 ? 's' : ''} · $${total}`;
             } else {
                 btn.style.display = 'none';
             }
-            load(); 
+            load();
         }
 
-        async function submitPicks() {
-            if(selectedSquares.length === 0) return;
-            const name = prompt(`Enter Name for these ${selectedSquares.length} squares:`);
-            if(!name) return;
+        const SUBMIT_NOTES = ['pizza 🍕', 'tacos 🌮', 'coffee ☕', 'snacks 🍿', 'lunch 🥪'];
 
+        function submitPicks() {
+            if(selectedSquares.length === 0) return;
+            if(!getName()) { openWelcome(); return; }
+            openSubmit();
+        }
+
+        function openSubmit() {
+            const count = selectedSquares.length;
+            const cost = lastData ? Number(lastData.cost) : 0;
+            const total = count * cost;
+            const venmo = lastData ? lastData.venmoUrl : '';
+            const note = SUBMIT_NOTES[Math.floor(Math.random() * SUBMIT_NOTES.length)];
+            document.getElementById('sm-count').innerText = `${count} square${count > 1 ? 's' : ''}`;
+            let pay;
+            if (venmo) {
+                pay = `<div style="margin-top:14px;">
+                    <a href="${venmo}" target="_blank" class="venmo-btn">Pay $${total} on Venmo</a>
+                    <div style="margin-top:10px; font-size:0.82rem; color:#aaa;">Add the note <strong>"${note}"</strong> so Venmo doesn't flag it as betting. 🙏</div>
+                    <div style="margin-top:6px; font-size:0.82rem; color:#aaa;">…or hand $${total} cash to the admin.</div>
+                </div>`;
+            } else {
+                pay = `<div style="margin-top:14px; font-size:0.9rem; color:#ddd;">Hand <strong>$${total}</strong> cash to the admin.</div>`;
+            }
+            document.getElementById('sm-body').innerHTML =
+                `<div>Claiming as <strong>${escapeHtml(getName())}</strong>, total <strong>$${total}</strong> <span style="color:#888;">($${cost} × ${count})</span>.</div>${pay}
+                 <div style="margin-top:12px; font-size:0.8rem; color:#fbbf24;">${payDeadlineMsg()}</div>`;
+            document.getElementById('sm-actions').innerHTML =
+                `<button class="modal-close" onclick="confirmSubmit()">Confirm &amp; Claim</button>
+                 <div style="text-align:center; margin-top:8px;"><a href="#" onclick="closeSubmit();return false;" style="color:#888; font-size:0.85rem;">Cancel</a></div>`;
+            document.getElementById('submit-modal').classList.add('open');
+        }
+
+        async function confirmSubmit() {
+            const count = selectedSquares.length;
             const res = await fetch(`/api/pool/${poolId}/claim-batch`, {
                 method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({ squares: selectedSquares, name: name })
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ squares: selectedSquares, name: getName() })
             });
             const d = await res.json();
-            if(d.errors > 0) alert("Some squares were already taken!");
-            
-            selectedSquares = []; 
-            document.getElementById('submit-bar').style.display = 'none'; 
+            const claimed = (d.claimed != null) ? d.claimed : count;
+            selectedSquares = [];
+            document.getElementById('submit-bar').style.display = 'none';
+            let msg = `🎉 Claimed ${claimed} square${claimed !== 1 ? 's' : ''}!`;
+            if (d.errors > 0) msg += ` (${d.errors} were already taken and skipped.)`;
+            document.getElementById('sm-body').innerHTML =
+                `<div style="font-size:1rem;">${msg}</div>
+                 <div style="margin-top:10px; color:#fbbf24; font-size:0.85rem;">${payDeadlineMsg()}</div>`;
+            document.getElementById('sm-actions').innerHTML = `<button class="modal-close" onclick="closeSubmit()">Done</button>`;
             load();
+        }
+        function closeSubmit() { document.getElementById('submit-modal').classList.remove('open'); load(); }
+        function payDeadlineMsg() {
+            const d = (lastData && lastData.paymentDeadline) ? lastData.paymentDeadline : '';
+            if (d) return `⚠️ If not paid by <strong>${escapeHtml(d)}</strong>, your squares may be deleted.`;
+            return `⚠️ Don't forget to pay. Unpaid squares may be released by the admin.`;
         }
 
         function renderResults(data, winnersInfo) {
@@ -383,6 +493,80 @@
             });
         }
 
+        // Tapping a taken square shows its claim info. Extend the body as we add
+        // more per-square data (payment history, notes, etc.).
+        function showSquareInfo(r, c, sq, data) {
+            const top = (data.topHeaders || [])[c];
+            const left = (data.leftHeaders || [])[r];
+            const numbers = (typeof top === 'number' && typeof left === 'number')
+                ? `${data.teamTop || 'Top'} ${top} &bull; ${data.teamLeft || 'Left'} ${left}`
+                : 'Not drawn yet';
+            let claimed = 'Unknown';
+            if (sq.claimed_at) { const d = new Date(sq.claimed_at); if (!isNaN(d)) claimed = d.toLocaleString(); }
+            const paid = sq.is_paid === 1 ? 'Paid ✅' : 'Unpaid ❌';
+            const cellId = r * 10 + c + 1;
+
+            document.getElementById('sq-title').innerText = sq.name;
+            document.getElementById('sq-body').innerHTML = `
+                <div><span class="k">Cell:</span> #${cellId}</div>
+                <div><span class="k">Claimed:</span> ${claimed}</div>
+                <div><span class="k">Numbers:</span> ${numbers}</div>
+                <div><span class="k">Payment:</span> ${paid}</div>
+                <div style="margin-top:10px; color:#888; font-size:0.82rem;">To remove this square, ask the admin to clear cell #${cellId}.</div>
+            `;
+            document.getElementById('sq-modal').classList.add('open');
+        }
+        function closeSquareInfo() { document.getElementById('sq-modal').classList.remove('open'); }
+        window.addEventListener('keydown', (e) => { if (e.key === 'Escape') { closeSquareInfo(); } });
+
+        function updateNumbersRule(data) {
+            const el = document.getElementById('numbers-rule');
+            if (!el) return;
+            if (data.numberMode === 'per_quarter') el.innerText = 'Re-drawn at the start of every quarter.';
+            else if (data.numberMode === 'per_half') el.innerText = 'Re-drawn at halftime.';
+            else el.innerText = 'Randomly generated (0-9) once the board is locked, then fixed all game.';
+        }
+        function updateNameLine() {
+            const el = document.getElementById('name-line');
+            const n = getName();
+            if (n) el.innerHTML = `Claiming as <strong>${escapeHtml(n)}</strong> · <a href="#" onclick="openWelcome();return false;" style="color:#008CFF;">change</a>`;
+            else el.innerHTML = `<a href="#" onclick="openWelcome();return false;" style="color:#008CFF;">Set your name to claim →</a>`;
+        }
+        function openWelcome() {
+            if (!lastData) return;
+            renderWelcome(lastData);
+            document.getElementById('welcome').classList.add('open');
+        }
+        function renderWelcome(data) {
+            document.getElementById('wel-title').innerText = 'Welcome to ' + (data.name || 'Squares');
+            let rotation;
+            if (data.numberMode === 'per_quarter') rotation = 'The numbers are re-drawn at the start of every quarter.';
+            else if (data.numberMode === 'per_half') rotation = 'The numbers are re-drawn at halftime.';
+            else rotation = 'The numbers are drawn once the board locks and stay the same all game.';
+            document.getElementById('wel-rules').innerHTML = `
+                <div><span class="k">Cost:</span> $${data.cost} per square.</div>
+                <div><span class="k">Win:</span> Q1, Q2, Q3, and the final score of the game (last digit of each team's score).</div>
+                <div><span class="k">Numbers:</span> ${rotation}</div>
+                <div><span class="k">Rollover:</span> an empty winning square goes to the next filled square reading right.</div>
+                <div><span class="k">To play:</span> tap squares, then Claim, and your name fills in automatically.</div>
+            `;
+            document.getElementById('wel-name').value = getName();
+            document.getElementById('wel-err').innerText = '';
+        }
+        function continueWelcome() {
+            const n = document.getElementById('wel-name').value.trim();
+            if (!n) { document.getElementById('wel-err').innerText = 'Please enter a name (or tap "Just looking").'; return; }
+            setName(n);
+            localStorage.setItem(seenKey, '1');
+            document.getElementById('welcome').classList.remove('open');
+            updateNameLine();
+        }
+        function skipWelcome() {
+            localStorage.setItem(seenKey, '1');
+            document.getElementById('welcome').classList.remove('open');
+        }
+        function escapeHtml(s) { return String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
+
         function createDiv(cls, txt, styles={}) {
             const d = document.createElement('div'); d.className = cls; d.innerText = txt;
             for(let s in styles) d.style[s] = styles[s];
@@ -403,11 +587,11 @@
                 const scale = Math.min(1, cw / gw);
                 grid.style.transform = `scale(${scale})`;
                 container.style.height = (gh * scale) + 'px';
-                container.style.overflowX = 'hidden';
+                container.style.overflow = 'hidden';
             } else {
                 grid.style.transform = '';
                 container.style.height = '';
-                container.style.overflowX = '';
+                container.style.overflow = '';
             }
             if (btn) btn.innerText = fitMode ? '⤢ Actual size' : '⤢ Fit to screen';
         }

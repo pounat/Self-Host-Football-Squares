@@ -43,6 +43,7 @@
         input:focus { outline: 2px solid #008CFF; border-color: transparent; }
         input.score-in { width: 40px; text-align: center; }
         input.cost-in { width: 60px; text-align: center; }
+        input.pay-amt { width: 55px; text-align: center; padding: 4px 6px; margin: 0; font-size: 0.8rem; }
         input.color-picker { width: 40px; height: 35px; padding: 0; border: none; border-radius: 6px; overflow: hidden; }
 
         button { 
@@ -58,11 +59,12 @@
         button.orange { background: #fbbf24; color: #3d2200; }
         button.yellow { background: #facc15; color: black; }
 
-        /* Mini grid — mobile management surface */
+        /* Mini grid: mobile management surface */
         #mini-grid { display: grid; grid-template-columns: repeat(11, 30px); gap: 2px; justify-content: center; margin-top: 15px; }
         #mini-grid .cell { width: 30px; height: 30px; background: #2d2d2d; color: #888; font-size: 10px; display: flex; align-items: center; justify-content: center; cursor: pointer; border-radius: 4px; }
         #mini-grid .cell:hover { background: #444; color: white; }
         #mini-grid .cell.taken { background: #2a3c55; color: #fff; border: 1px solid #4a6fa5; }
+        #mini-grid .cell.paid { background: #1e7a4d; color: #eafff3; border: 1px solid #34c77b; }
         #mini-grid .cell.header { background: #111; color: white; cursor: default; font-weight: bold; }
 
         /* Two-column desktop layout: controls left, full board right */
@@ -76,7 +78,7 @@
             #mini-wrap { display: none; }
         }
 
-        /* Full board (desktop right column) — mirrors the player board */
+        /* Full board (desktop right column): mirrors the player board */
         .board-scroll { width: 100%; overflow-x: auto; padding: 5px; box-sizing: border-box; }
         .grid {
             display: grid;
@@ -94,10 +96,10 @@
         .grid .team-left-bar { grid-column: 1; grid-row: 3 / span 10; border-radius: 12px; color: #fff; font-weight: 800; font-size: 1.1rem; letter-spacing: 1px; writing-mode: vertical-rl; transform: rotate(180deg); text-shadow: 0 2px 4px rgba(0,0,0,0.8); }
         .grid .header-top, .grid .header-left { background: #2d2d2d; color: #fff; font-weight: 800; font-size: 1rem; border: 1px solid #444; }
         .grid .corner-dead { background: transparent; box-shadow: none; }
-        .grid .corner-logo { background: #000; color: #888; border-radius: 50%; grid-column: 2; grid-row: 2; font-size: 0.6rem; font-weight: bold; border: 1px solid #333; }
         .grid .square { cursor: pointer; color: #666; background: #252525; }
         .grid .square:hover { background: #333; color: #fff; }
         .grid .square.taken { background: #2a3c55; color: #fff; font-weight: 600; border: 1px solid #3d4f68; }
+        .grid .square.paid { background: #1e7a4d; color: #eafff3; border: 1px solid #34c77b; }
         .grid .square.winner { background: #ffd700; color: #000; font-weight: 900; }
         .grid .square.phantom { background: rgba(255,215,0,0.2); border: 2px dashed #ffd700; color: #ffd700; font-size: 0.6rem; }
 
@@ -105,11 +107,16 @@
         table.stats th { text-align: left; color: #888; padding: 8px; border-bottom: 1px solid #444; }
         table.stats td { padding: 8px; border-bottom: 1px solid #333; color: #eee; }
         table.stats tr:last-child td { border-bottom: none; font-weight: bold; color: white; }
+        table.stats.log td, table.stats.log th { padding: 5px 6px; font-size: 0.8rem; }
+        table.stats.log tr:last-child td { font-weight: normal; color: #eee; }
+        table.stats.log tr.empty td { color: #666; }
+        table.stats.log button.red { padding: 2px 8px; font-size: 0.7rem; margin: 0; }
 
         .status-badge { cursor: pointer; font-size: 1.1rem; user-select: none; }
         .status-badge:hover { opacity: 0.7; }
-        .unpaid { color: #ff6b6b; } 
-        .paid { color: #4ade80; }   
+        .unpaid { color: #ff6b6b; }
+        .paid { color: #4ade80; }
+        .partial { color: #fbbf24; }
 
         .login-box { 
             background: var(--surface-color); color: white; max-width: 300px; 
@@ -150,6 +157,11 @@
                 <span class="label">Cost:</span>
                 <input type="number" id="cost-input" class="cost-in" value="3">
                 <button class="primary" onclick="saveCost()">Set</button>
+            </div>
+            <div class="row">
+                <span class="label">Pay by:</span>
+                <input type="text" id="deadline-input" placeholder="e.g. kickoff Sunday" style="flex:1; min-width:0;">
+                <button class="primary" onclick="saveDeadline()">Set</button>
             </div>
             <div class="row">
                 <span class="label">Top Team:</span>
@@ -202,6 +214,14 @@
                 <button class="red" onclick="resetBoard()">⚠️ WIPE ALL NAMES</button>
             </div>
         </div>
+
+        <div class="panel-box">
+            <h3>6. Square Log</h3>
+            <details>
+                <summary style="cursor:pointer; color:#008CFF; font-weight:600;">Show all 100 squares</summary>
+                <div id="square-log" style="margin-top:12px;"></div>
+            </details>
+        </div>
         
             <br>
             <a id="back-link" href="/" style="color:#008CFF; text-decoration:none;">← Back to Public Board</a>
@@ -213,15 +233,19 @@
         </div>
     </div>
 
+    <script src="/ui.js"></script>
     <script>
         const poolId = (location.pathname.match(/^\/p\/([^\/]+)\/admin/) || [])[1];
         let adminToken = location.hash.replace(/^#/, '');
+        let lastAdminData = null;
+        let adminUnlocked = false;
 
         if (!poolId) { location.href = '/'; }
         document.getElementById('back-link').href = `/p/${poolId}`;
 
         async function tryUnlock() {
             const res = await fetch(`/api/pool/${poolId}/admin/check`, { headers: { 'X-Admin-Token': adminToken } });
+            adminUnlocked = res.ok;
             if (res.ok) {
                 document.getElementById('login-screen').style.display = 'none';
                 document.getElementById('admin-ui').style.display = 'block';
@@ -243,21 +267,26 @@
         if (adminToken) tryUnlock();
         else document.getElementById('login-screen').style.display = 'block';
 
-        async function loadAdmin() {
+        async function loadAdmin(withInputs = true) {
             const res = await fetch(`/api/pool/${poolId}`);
-            if (res.status === 404) { alert('Pool not found.'); return; }
+            if (res.status === 404) { uiAlert('Pool not found.'); return; }
             const data = await res.json();
-            
-            document.getElementById('team-top').value = data.teamTop;
-            document.getElementById('color-top').value = data.colorTop;
-            document.getElementById('team-left').value = data.teamLeft;
-            document.getElementById('color-left').value = data.colorLeft;
-            document.getElementById('cost-input').value = data.cost;
-            
-            ['q1','q2','q3','final'].forEach(q => {
-                document.getElementById(`s-${q}-top`).value = data.scores[q].top;
-                document.getElementById(`s-${q}-left`).value = data.scores[q].left;
-            });
+            lastAdminData = data;
+
+            // Skip the settings fields on background refreshes so we don't overwrite
+            // values the admin is mid-edit.
+            if (withInputs) {
+                document.getElementById('team-top').value = data.teamTop;
+                document.getElementById('color-top').value = data.colorTop;
+                document.getElementById('team-left').value = data.teamLeft;
+                document.getElementById('color-left').value = data.colorLeft;
+                document.getElementById('cost-input').value = data.cost;
+                document.getElementById('deadline-input').value = data.paymentDeadline || '';
+                ['q1','q2','q3','final'].forEach(q => {
+                    document.getElementById(`s-${q}-top`).value = data.scores[q].top;
+                    document.getElementById(`s-${q}-left`).value = data.scores[q].left;
+                });
+            }
 
             document.getElementById('lock-btn').style.display = data.isLocked ? 'none' : 'inline-block';
             document.getElementById('unlock-btn').style.display = data.isLocked ? 'inline-block' : 'none';
@@ -265,6 +294,7 @@
             renderGrid(data);
             renderFullBoard(data);
             renderStats(data.squares, data.cost);
+            renderLog(data);
         }
 
         function renderGrid(data) {
@@ -278,14 +308,13 @@
                     const taken = data.squares.find(s=>s.row===r && s.col===c);
                     const div = document.createElement('div');
                     if(taken) {
-                        div.className = 'cell taken';
+                        div.className = 'cell taken' + (taken.is_paid === 1 ? ' paid' : '');
                         div.innerText = taken.name.substring(0,2);
                         div.title = taken.name;
-                        div.onclick = () => handleEdit(r, c, taken.name);
                     } else {
                         div.className = 'cell';
-                        div.onclick = () => forceAssign(r, c);
                     }
+                    div.onclick = () => openSquareAdmin(r, c);
                     grid.appendChild(div);
                 }
             }
@@ -306,7 +335,7 @@
             grid.appendChild(mk('cell corner-dead', '', { gridRow: '1', gridColumn: '1' }));
             grid.appendChild(mk('cell corner-dead', '', { gridRow: '1', gridColumn: '2' }));
             grid.appendChild(mk('cell corner-dead', '', { gridRow: '2', gridColumn: '1' }));
-            grid.appendChild(mk('cell corner-logo', 'SB'));
+            grid.appendChild(mk('cell corner-dead', '', { gridRow: '2', gridColumn: '2' }));
             data.topHeaders.forEach(h => grid.appendChild(mk('cell header-top', h)));
 
             const winners = data.winners || {};
@@ -314,7 +343,7 @@
                 grid.appendChild(mk('cell header-left', data.leftHeaders[r]));
                 for (let c = 0; c < 10; c++) {
                     const taken = data.squares.find(s => s.row === r && s.col === c);
-                    let cls = taken ? 'cell square taken' : 'cell square';
+                    let cls = taken ? ('cell square taken' + (taken.is_paid === 1 ? ' paid' : '')) : 'cell square';
                     let isWinner = false, isPhantom = false;
                     Object.values(winners).forEach(w => {
                         if (w.winner && w.winner.r === r && w.winner.c === c) isWinner = true;
@@ -324,8 +353,8 @@
                     else if (isPhantom) cls += ' phantom';
                     const txt = taken ? taken.name : (isPhantom ? 'SCORE' : '');
                     const div = mk(cls, txt);
-                    if (taken) { div.title = taken.name; div.onclick = () => handleEdit(r, c, taken.name); }
-                    else { div.onclick = () => forceAssign(r, c); }
+                    if (taken) div.title = taken.name;
+                    div.onclick = () => openSquareAdmin(r, c);
                     grid.appendChild(div);
                 }
             }
@@ -333,35 +362,34 @@
 
         function renderStats(squares, cost) {
             const counts = {};
-            const paidStatus = {};
+            const paidCounts = {};
             squares.forEach(s => {
                 counts[s.name] = (counts[s.name] || 0) + 1;
-                if (paidStatus[s.name] === undefined) paidStatus[s.name] = true;
-                if (s.is_paid !== 1) paidStatus[s.name] = false;
+                paidCounts[s.name] = (paidCounts[s.name] || 0) + (s.is_paid === 1 ? 1 : 0);
             });
             
-            let html = `<table class="stats"><tr><th>Name</th><th>Count</th><th>Owes ($${cost})</th><th>Paid?</th></tr>`;
+            let html = `<table class="stats"><tr><th>Name</th><th>#</th><th>Owes</th><th>Paid $</th><th></th></tr>`;
             let totalSq = 0;
-            
+
             Object.keys(counts).sort().forEach(name => {
                 const num = counts[name];
-                const isPaid = paidStatus[name];
-                const badge = isPaid ? '✅' : '❌';
-                const badgeClass = isPaid ? 'paid' : 'unpaid';
-                
-                // SAFE ESCAPING for the onclick event
-                const safeName = name.replace(/'/g, "\\'"); 
-                
+                const paid = paidCounts[name];
+                let badge, badgeClass;
+                if (paid >= num) { badge = '✅'; badgeClass = 'paid'; }
+                else if (paid === 0) { badge = '❌'; badgeClass = 'unpaid'; }
+                else { badge = `◐ ${paid}/${num}`; badgeClass = 'partial'; }
+                const safe = escapeHtml(name);
                 totalSq += num;
                 html += `<tr>
-                    <td>${name}</td>
+                    <td>${safe}</td>
                     <td>${num}</td>
                     <td>$${num * cost}</td>
-                    <td><span class="status-badge ${badgeClass}" onclick="togglePay('${safeName}')">${badge}</span></td>
+                    <td>$<input class="pay-amt" type="number" min="0" value="${paid * cost}" data-name="${safe}" onkeyup="if(event.key==='Enter') applyPaid(this)" onchange="applyPaid(this)"></td>
+                    <td><span class="status-badge ${badgeClass}" data-name="${safe}" onclick="togglePay(this.dataset.name)" title="Mark all paid / unpaid">${badge}</span></td>
                 </tr>`;
             });
             const totalMoney = totalSq * cost;
-            html += `<tr><td><strong>TOTAL</strong></td><td><strong>${totalSq} / 100</strong></td><td><strong>$${totalMoney}</strong></td><td>-</td></tr></table>`;
+            html += `<tr><td><strong>TOTAL</strong></td><td><strong>${totalSq}/100</strong></td><td><strong>$${totalMoney}</strong></td><td></td><td></td></tr></table>`;
             document.getElementById('stats-container').innerHTML = html;
             
             const qPay = (totalMoney / 4).toFixed(2);
@@ -375,26 +403,96 @@
             const d = document.createElement('div'); d.className='cell '+cls; d.innerText=t; c.appendChild(d);
         }
 
+        function renderLog(data) {
+            const rows = [];
+            for (let r = 0; r < 10; r++) {
+                for (let c = 0; c < 10; c++) {
+                    const cellId = r * 10 + c + 1;
+                    const sq = data.squares.find(s => s.row === r && s.col === c);
+                    const top = data.topHeaders[c], left = data.leftHeaders[r];
+                    const nums = (typeof top === 'number' && typeof left === 'number') ? `${top}/${left}` : '-';
+                    if (sq) {
+                        const when = sq.claimed_at ? new Date(sq.claimed_at).toLocaleString() : '-';
+                        const paid = sq.is_paid === 1 ? '✅' : '❌';
+                        rows.push(`<tr><td>#${cellId}</td><td>${nums}</td><td>${escapeHtml(sq.name)}</td><td>${when}</td><td>${paid}</td><td><button class="red" onclick="clearCell(${r},${c})">✕</button></td></tr>`);
+                    } else {
+                        rows.push(`<tr class="empty"><td>#${cellId}</td><td>${nums}</td><td colspan="3">unclaimed</td><td></td></tr>`);
+                    }
+                }
+            }
+            document.getElementById('square-log').innerHTML =
+                `<table class="stats log"><tr><th>Cell</th><th>#s</th><th>Name</th><th>Claimed</th><th>Paid</th><th></th></tr>${rows.join('')}</table>`;
+        }
+        async function clearCell(r, c) {
+            if (await uiConfirm('Remove this claim?', { danger: true, okText: 'Remove' })) await apiCall('clear', { row: r, col: c });
+        }
+        function escapeHtml(s) { return String(s).replace(/[&<>"]/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch])); }
+
         async function togglePay(name) {
             await apiCall('toggle-pay', { name });
         }
 
-        async function handleEdit(r, c, oldName) {
-            const newName = prompt("Edit Name (Clear to delete):", oldName);
-            if (newName === null) return;
-            if (newName.trim() === "") { if(confirm("Delete?")) await apiCall('clear', { row:r, col:c }); }
-            else { await apiCall('rename', { row:r, col:c, name: newName }); }
+        async function applyPaid(el) {
+            const name = el.dataset.name;
+            const amount = Number(el.value) || 0;
+            await apiCall('set-paid', { name, amount });
         }
 
-        async function forceAssign(r, c) {
-            const name = prompt("Assign to:");
-            if(name) await apiCall('assign', { row:r, col:c, name });
+        async function openSquareAdmin(r, c) {
+            const data = lastAdminData;
+            if (!data) return;
+            const cellId = r * 10 + c + 1;
+            const sq = data.squares.find(s => s.row === r && s.col === c);
+            const top = data.topHeaders[c], left = data.leftHeaders[r];
+            const nums = (typeof top === 'number' && typeof left === 'number') ? `${top} / ${left}` : 'not drawn';
+            let body, buttons;
+            if (sq) {
+                const when = sq.claimed_at ? new Date(sq.claimed_at).toLocaleString() : 'Unknown';
+                const paid = sq.is_paid === 1 ? 'Paid ✅' : 'Unpaid ❌';
+                body = `<div><span class="k">Owner:</span> ${escapeHtml(sq.name)}</div>
+                        <div><span class="k">Claimed:</span> ${when}</div>
+                        <div><span class="k">Numbers:</span> ${nums}</div>
+                        <div><span class="k">Payment:</span> ${paid}</div>`;
+                buttons = [
+                    { text: sq.is_paid === 1 ? 'Mark unpaid' : 'Mark paid', class: sq.is_paid === 1 ? 'ghost' : 'primary', value: 'pay' },
+                    { text: 'Edit name', class: 'ghost', value: 'edit' },
+                    { text: 'Delete', class: 'danger', value: 'delete' },
+                    { text: 'Close', class: 'ghost', value: 'close' }
+                ];
+            } else {
+                body = `<div><span class="k">Status:</span> Unclaimed</div>
+                        <div><span class="k">Numbers:</span> ${nums}</div>`;
+                buttons = [
+                    { text: 'Assign', class: 'primary', value: 'assign' },
+                    { text: 'Close', class: 'ghost', value: 'close' }
+                ];
+            }
+            const action = await uiDialog({ title: `Cell #${cellId}`, bodyHtml: body, buttons });
+            if (action === 'pay') {
+                await apiCall('toggle-pay-cell', { row: r, col: c });
+            } else if (action === 'edit') {
+                const n = await uiPrompt('Edit name:', { defaultValue: sq.name, okText: 'Save' });
+                if (n && n.trim()) await apiCall('rename', { row: r, col: c, name: n.trim() });
+            } else if (action === 'delete') {
+                if (await uiConfirm(`Delete ${sq.name}'s claim on cell #${cellId}?`, { danger: true, okText: 'Delete' })) {
+                    await apiCall('clear', { row: r, col: c });
+                }
+            } else if (action === 'assign') {
+                const n = await uiPrompt('Assign cell to:', { okText: 'Assign' });
+                if (n && n.trim()) await apiCall('assign', { row: r, col: c, name: n.trim() });
+            }
         }
 
         async function saveCost() {
             const cost = document.getElementById('cost-input').value;
             await apiCall('settings', { cost });
-            alert("Cost Updated");
+            uiToast('Cost updated');
+        }
+
+        async function saveDeadline() {
+            const paymentDeadline = document.getElementById('deadline-input').value;
+            await apiCall('settings', { paymentDeadline });
+            uiToast('Deadline saved');
         }
 
         async function saveScores() {
@@ -406,7 +504,7 @@
                 };
             });
             await apiCall('scores', scores);
-            alert("Scores Updated");
+            uiToast('Scores updated');
         }
 
         async function saveTeams() {
@@ -415,7 +513,7 @@
             const teamLeft = document.getElementById('team-left').value;
             const colorLeft = document.getElementById('color-left').value;
             await apiCall('teams', { teamTop, colorTop, teamLeft, colorLeft });
-            alert("Teams Saved");
+            uiToast('Teams saved');
         }
 
         async function apiCall(action, body) {
@@ -424,14 +522,16 @@
                 headers: { 'Content-Type': 'application/json', 'X-Admin-Token': adminToken },
                 body: JSON.stringify(body)
             });
-            if (res.status === 401) { alert('Unauthorized — check your admin link.'); return; }
+            if (res.status === 401) { uiAlert('Unauthorized. Check your admin link.'); return; }
             loadAdmin();
         }
 
         async function toggleLock(l) { await apiCall('lock', {locked:l}); }
-        async function randomize() { if(confirm("Randomize #s?")) await apiCall('randomize', {}); }
-        async function resetHeaders() { if(confirm("Reset #s to ?")) await apiCall('clear-headers', {}); }
-        async function resetBoard() { if(prompt("Type RESET")==='RESET') await apiCall('reset-board', {}); }
+        async function randomize() { if(await uiConfirm('Randomize the numbers for this board?', {okText:'Randomize'})) await apiCall('randomize', {}); }
+        async function resetHeaders() { if(await uiConfirm("Reset the numbers back to '?'", {okText:'Reset'})) await apiCall('clear-headers', {}); }
+        async function resetBoard() { if(await uiConfirm('Wipe ALL names from this board? This cannot be undone.', {danger:true, okText:'Wipe all'})) await apiCall('reset-board', {}); }
+
+        setInterval(() => { if (adminUnlocked) loadAdmin(false); }, 5000);
 
     </script>
 </body>

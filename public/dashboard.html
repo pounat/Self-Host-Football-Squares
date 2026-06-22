@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Squares — Owner Dashboard</title>
+    <title>Squares Owner Dashboard</title>
     <style>
         :root {
             --bg-color: #121212;
@@ -68,7 +68,7 @@
     <!-- SET UP (first boot) -->
     <div class="panel-box" id="setup-view" style="display:none;">
         <h3>Set your owner password</h3>
-        <p class="muted" style="margin-top:0;">This is the first run. Pick a password to manage every board on this server. Keep it safe — it's how you get back in.</p>
+        <p class="muted" style="margin-top:0;">This is the first run. Pick a password to manage every board on this server. Keep it safe, it's how you get back in.</p>
         <div class="row"><span class="label">Password</span><input id="setup-pass" type="password" placeholder="At least 4 characters"></div>
         <div class="row"><span class="label">Confirm</span><input id="setup-pass2" type="password" placeholder="Repeat it" onkeyup="if(event.key==='Enter') doSetup()"></div>
         <div class="err" id="setup-err"></div>
@@ -158,7 +158,7 @@
             document.getElementById('count').innerText = data.pools.length;
             const origin = location.origin;
             const wrap = document.getElementById('boards');
-            if (!data.pools.length) { wrap.innerHTML = '<p class="muted">No boards yet — create one above.</p>'; return; }
+            if (!data.pools.length) { wrap.innerHTML = '<p class="muted">No boards yet. Create one above.</p>'; return; }
             wrap.innerHTML = data.pools.map(p => {
                 const share = origin + p.shareUrl;
                 const admin = origin + p.adminUrl;

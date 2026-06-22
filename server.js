@@ -60,6 +60,14 @@ async function migrate() {
         await migrateToV2();
         await dbRun('PRAGMA user_version = 2');
     }
+    if (user_version < 3) {
+        await migrateToV3();
+        await dbRun('PRAGMA user_version = 3');
+    }
+    if (user_version < 4) {
+        await migrateToV4();
+        await dbRun('PRAGMA user_version = 4');
+    }
 }
 
 async function migrateToV1() {
@@ -140,7 +148,7 @@ async function migrateToV1() {
         console.log('--- Migrated existing board into a default pool ---');
         console.log(`    Public:  /p/${id}`);
         console.log(`    Admin:   /p/${id}/admin#${adminToken}`);
-        console.log('    Save the admin link above — it is the only way back into admin.');
+        console.log('    Save the admin link above. It is the only way back into admin.');
     } else if (!squaresExists) {
         // Fresh database.
         await dbExec(`
@@ -165,6 +173,20 @@ async function migrateToV2() {
             created_at TEXT DEFAULT CURRENT_TIMESTAMP
         );
     `);
+}
+
+async function migrateToV3() {
+    const cols = await dbAll('PRAGMA table_info(squares)');
+    if (!cols.some((c) => c.name === 'claimed_at')) {
+        await dbExec('ALTER TABLE squares ADD COLUMN claimed_at TEXT');
+    }
+}
+
+async function migrateToV4() {
+    const cols = await dbAll('PRAGMA table_info(pools)');
+    if (!cols.some((c) => c.name === 'payment_deadline')) {
+        await dbExec('ALTER TABLE pools ADD COLUMN payment_deadline TEXT');
+    }
 }
 
 // --- VALIDATION ---
@@ -333,7 +355,7 @@ app.get('/api/pool/:id', ah(async (req, res) => {
     const pool = await dbGet('SELECT * FROM pools WHERE id = ?', [req.params.id]);
     if (!pool) return res.status(404).json({ error: 'Pool not found' });
 
-    const squares = await dbAll('SELECT row, col, name, is_paid FROM squares WHERE pool_id = ?', [req.params.id]);
+    const squares = await dbAll('SELECT row, col, name, is_paid, claimed_at FROM squares WHERE pool_id = ?', [req.params.id]);
     const scoreRows = await dbAll('SELECT period, top_score, left_score FROM scores WHERE pool_id = ?', [req.params.id]);
 
     const scores = { q1: { top: '', left: '' }, q2: { top: '', left: '' }, q3: { top: '', left: '' }, final: { top: '', left: '' } };
@@ -357,6 +379,7 @@ app.get('/api/pool/:id', ah(async (req, res) => {
         colorLeft: pool.color_left || '#333',
         cost: pool.cost_per_square || '0',
         venmoUrl: pool.venmo_url || '',
+        paymentDeadline: pool.payment_deadline || '',
         numberMode: pool.number_mode || 'once',
         scores,
     });
@@ -373,7 +396,7 @@ app.post('/api/pool/:id/claim', ah(async (req, res) => {
     if (pool.locked === 1) return res.status(403).json({ error: 'Game is locked!' });
 
     try {
-        await dbRun('INSERT INTO squares (pool_id, row, col, name) VALUES (?, ?, ?, ?)', [req.params.id, row, col, name]);
+        await dbRun('INSERT INTO squares (pool_id, row, col, name, claimed_at) VALUES (?, ?, ?, ?, ?)', [req.params.id, row, col, name, new Date().toISOString()]);
     } catch (e) {
         return res.status(400).json({ error: 'Square taken.' });
     }
@@ -398,7 +421,7 @@ app.post('/api/pool/:id/claim-batch', ah(async (req, res) => {
     try {
         for (const sq of squares) {
             try {
-                await dbRun('INSERT INTO squares (pool_id, row, col, name) VALUES (?, ?, ?, ?)', [req.params.id, sq.r, sq.c, name]);
+                await dbRun('INSERT INTO squares (pool_id, row, col, name, claimed_at) VALUES (?, ?, ?, ?, ?)', [req.params.id, sq.r, sq.c, name, new Date().toISOString()]);
                 claimed++;
             } catch (e) {
                 errors++;
@@ -423,11 +446,49 @@ app.post('/api/pool/:id/admin/lock', poolAdmin, ah(async (req, res) => {
 app.post('/api/pool/:id/admin/toggle-pay', poolAdmin, ah(async (req, res) => {
     const name = cleanName(req.body.name);
     if (!name) return res.status(400).json({ error: 'Name required.' });
-    const row = await dbGet('SELECT is_paid FROM squares WHERE pool_id = ? AND name = ? LIMIT 1', [req.params.id, name]);
-    if (!row) return res.json({ success: true });
-    const newStatus = row.is_paid === 1 ? 0 : 1;
+    // Decide from the whole set, not one arbitrary square: if everything is already
+    // paid, unmark all; otherwise (none or only some paid) mark all paid. This way a
+    // person who pays, then claims more squares, gets marked fully paid in one click.
+    const stats = await dbGet('SELECT COUNT(*) AS total, SUM(is_paid) AS paid FROM squares WHERE pool_id = ? AND name = ?', [req.params.id, name]);
+    if (!stats || stats.total === 0) return res.json({ success: true });
+    const newStatus = (stats.paid === stats.total) ? 0 : 1;
     await dbRun('UPDATE squares SET is_paid = ? WHERE pool_id = ? AND name = ?', [newStatus, req.params.id, name]);
     res.json({ success: true, isPaid: newStatus === 1 });
+}));
+
+// Toggle the paid status of a single square (for partial payments).
+app.post('/api/pool/:id/admin/toggle-pay-cell', poolAdmin, ah(async (req, res) => {
+    const { row, col } = req.body;
+    if (!isDigit(row) || !isDigit(col)) return res.status(400).json({ error: 'Invalid square.' });
+    const sq = await dbGet('SELECT is_paid FROM squares WHERE pool_id = ? AND row = ? AND col = ?', [req.params.id, row, col]);
+    if (!sq) return res.status(404).json({ error: 'Square not claimed.' });
+    const newStatus = sq.is_paid === 1 ? 0 : 1;
+    await dbRun('UPDATE squares SET is_paid = ? WHERE pool_id = ? AND row = ? AND col = ?', [newStatus, req.params.id, row, col]);
+    res.json({ success: true, isPaid: newStatus === 1 });
+}));
+
+// Mark squares paid based on a dollar amount: floor(amount / cost) of a person's
+// squares get marked paid (in board order), the rest unpaid. Handles partial payments.
+app.post('/api/pool/:id/admin/set-paid', poolAdmin, ah(async (req, res) => {
+    const name = cleanName(req.body.name);
+    const amount = Number(req.body.amount);
+    if (!name || !(amount >= 0)) return res.status(400).json({ error: 'Invalid input.' });
+    const pool = await dbGet('SELECT cost_per_square FROM pools WHERE id = ?', [req.params.id]);
+    const cost = Number(pool && pool.cost_per_square) || 0;
+    const sqs = await dbAll('SELECT row, col FROM squares WHERE pool_id = ? AND name = ? ORDER BY row, col', [req.params.id, name]);
+    const total = sqs.length;
+    if (total === 0) return res.json({ success: true });
+    let paidCount = cost > 0 ? Math.floor(amount / cost) : (amount > 0 ? total : 0);
+    paidCount = Math.max(0, Math.min(total, paidCount));
+    await dbRun('BEGIN');
+    try {
+        await dbRun('UPDATE squares SET is_paid = 0 WHERE pool_id = ? AND name = ?', [req.params.id, name]);
+        for (let i = 0; i < paidCount; i++) {
+            await dbRun('UPDATE squares SET is_paid = 1 WHERE pool_id = ? AND row = ? AND col = ?', [req.params.id, sqs[i].row, sqs[i].col]);
+        }
+        await dbRun('COMMIT');
+    } catch (e) { await dbRun('ROLLBACK'); throw e; }
+    res.json({ success: true, paidCount, total });
 }));
 
 app.post('/api/pool/:id/admin/assign', poolAdmin, ah(async (req, res) => {
@@ -435,7 +496,7 @@ app.post('/api/pool/:id/admin/assign', poolAdmin, ah(async (req, res) => {
     const name = cleanName(req.body.name);
     if (!isDigit(row) || !isDigit(col) || !name) return res.status(400).json({ error: 'Invalid square or name.' });
     try {
-        await dbRun('INSERT INTO squares (pool_id, row, col, name) VALUES (?, ?, ?, ?)', [req.params.id, row, col, name]);
+        await dbRun('INSERT INTO squares (pool_id, row, col, name, claimed_at) VALUES (?, ?, ?, ?, ?)', [req.params.id, row, col, name, new Date().toISOString()]);
     } catch (e) {
         return res.status(400).json({ error: 'Square taken.' });
     }
@@ -490,10 +551,14 @@ app.post('/api/pool/:id/admin/teams', poolAdmin, ah(async (req, res) => {
 }));
 
 app.post('/api/pool/:id/admin/settings', poolAdmin, ah(async (req, res) => {
-    const sets = ['cost_per_square = ?'];
-    const vals = [String(req.body.cost ?? '0')];
+    // Partial update: only touch the fields actually provided.
+    const sets = [];
+    const vals = [];
+    if (req.body.cost !== undefined) { sets.push('cost_per_square = ?'); vals.push(String(req.body.cost)); }
     if (req.body.venmoUrl !== undefined) { sets.push('venmo_url = ?'); vals.push(req.body.venmoUrl || null); }
     if (req.body.numberMode !== undefined) { sets.push('number_mode = ?'); vals.push(req.body.numberMode); }
+    if (req.body.paymentDeadline !== undefined) { sets.push('payment_deadline = ?'); vals.push(req.body.paymentDeadline || null); }
+    if (!sets.length) return res.json({ success: true });
     vals.push(req.params.id);
     await dbRun(`UPDATE pools SET ${sets.join(', ')} WHERE id = ?`, vals);
     res.json({ success: true });
