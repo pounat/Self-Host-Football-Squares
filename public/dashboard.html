@@ -127,6 +127,15 @@
         </div>
     </div>
 
+    <div id="qr-modal" onclick="if(event.target===this) closeQR()" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.7); z-index:3000; align-items:center; justify-content:center; padding:20px;">
+        <div style="background:#1e1e1e; border:1px solid #444; border-radius:16px; padding:20px; text-align:center;">
+            <div id="qr-title" style="color:#fff; font-weight:700; margin-bottom:10px; word-break:break-word; max-width:260px;"></div>
+            <img id="qr-img" alt="QR code for the board link" style="width:240px; height:240px; background:#fff; border-radius:8px; display:block;">
+            <div style="margin-top:8px; color:#888; font-size:0.8rem;">Scan to open the board</div>
+            <div style="margin-top:12px;"><button class="ghost" onclick="closeQR()">Close</button></div>
+        </div>
+    </div>
+
     <script>
         const tokenKey = 'ownerToken';
         const getToken = () => localStorage.getItem(tokenKey) || '';
@@ -195,6 +204,7 @@
                     <div class="actions">
                         <button class="small" onclick="window.open('${share}','_blank')">Open board</button>
                         <button class="ghost small" onclick="copyText('${share}', this)">Copy board link</button>
+                        <button class="ghost small" onclick="showQR('${share}', '${escapeJs(p.name)}')">QR</button>
                         <button class="small" onclick="window.open('${admin}','_blank')">Open admin</button>
                         <button class="ghost small" onclick="copyText('${admin}', this)">Copy admin link</button>
                         <button class="red small" onclick="deleteBoard('${p.id}', '${escapeJs(p.name)}')">Delete</button>
@@ -274,6 +284,12 @@
             const old = btn.innerText; btn.innerText = 'Copied ✓';
             setTimeout(() => { btn.innerText = old; }, 1400);
         }
+        function showQR(url, name) {
+            document.getElementById('qr-title').innerText = name;
+            document.getElementById('qr-img').src = 'https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=' + encodeURIComponent(location.origin + url);
+            document.getElementById('qr-modal').style.display = 'flex';
+        }
+        function closeQR() { document.getElementById('qr-modal').style.display = 'none'; }
         function escapeHtml(s) { return String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
         function escapeJs(s) { return String(s).replace(/['\\]/g, '\\$&'); }
 

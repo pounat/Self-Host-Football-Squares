@@ -158,6 +158,7 @@
         .pwin-badge { font-size: 0.5rem; font-weight: 900; color: #000; border-radius: 3px; padding: 0 2px; line-height: 1.4; }
         .square.live-now { outline: 3px solid #fff; outline-offset: -3px; z-index: 13; }
         .square.live-target { outline: 2px dashed #fff; outline-offset: -2px; color: #fff; font-weight: 900; z-index: 12; }
+        .ann-icon { position: absolute; bottom: 1px; right: 2px; font-size: 0.72rem; line-height: 1; z-index: 14; pointer-events: none; }
         .live-bar { display: none; background: #252525; border: 1px solid #3d4f68; border-radius: 50px; padding: 8px 18px; margin: 0 auto 12px; max-width: max-content; font-size: 0.95rem; font-weight: 600; }
         .countdown-bar { display: none; background: #252525; border: 1px solid #4ade80; color: #4ade80; border-radius: 50px; padding: 7px 16px; margin: 0 auto 12px; max-width: max-content; font-size: 0.9rem; font-weight: 700; }
         
@@ -213,6 +214,7 @@
 
     <div class="top-tools">
         <button class="toolbar-btn" onclick="openRules()">📋 Rules &amp; Payouts</button>
+        <button class="toolbar-btn" onclick="openPick()">🎲 Pick for me</button>
         <button class="toolbar-btn" onclick="copyShareLink(this)">🔗 Share</button>
         <button id="fit-btn" class="toolbar-btn" onclick="toggleFit()">⤢ Fit to screen</button>
     </div>
@@ -285,6 +287,18 @@
                 </div>
             </div>
             <button class="modal-close" onclick="closeRules()">Got it</button>
+        </div>
+    </div>
+
+    <div id="pick-modal" class="modal-overlay" onclick="if(event.target===this) closePick()">
+        <div class="modal-card">
+            <div class="modal-title">Pick for me</div>
+            <div class="modal-body">
+                <div>How many squares should we choose at random?</div>
+                <input id="pick-count" class="wel-input" type="number" min="1" value="1" onkeyup="if(event.key==='Enter') doPick()">
+                <div id="pick-err" style="color:#ff6b6b; font-size:0.8rem; min-height:1em; margin-top:4px;"></div>
+            </div>
+            <button class="modal-close" onclick="doPick()">Pick my squares</button>
         </div>
     </div>
 
@@ -443,6 +457,8 @@
                         badges.innerHTML = (winMap[r + ',' + c] || []).map(q => `<span class="pwin-badge" style="background:${PERIOD_COLORS[slotForClient(data.numberMode, q)]}">${PERIOD_BADGE[q]}</span>`).join('');
                         div.appendChild(badges);
                     }
+                    const ann = (data.annotations || {})[r + ',' + c];
+                    if(ann && ann.icon) { const ic = document.createElement('span'); ic.className = 'ann-icon'; ic.textContent = ann.icon; div.appendChild(ic); }
                     if(taken) div.onclick = () => showSquareInfo(r, c, taken, data);
                     else if(!isLocked) div.onclick = () => toggleSelect(r, c);
                     grid.appendChild(div);
@@ -571,6 +587,8 @@
             if (sq.claimed_at) { const d = new Date(sq.claimed_at); if (!isNaN(d)) claimed = d.toLocaleString(); }
             const paid = sq.is_paid === 1 ? 'Paid ✅' : 'Unpaid ❌';
             const cellId = r * 10 + c + 1;
+            const ann = (data.annotations || {})[r + ',' + c];
+            const annLine = (ann && (ann.icon || ann.text)) ? `<div><span class="k">Note:</span> ${ann.icon || ''} ${escapeHtml(ann.text || '')}</div>` : '';
 
             document.getElementById('sq-title').innerText = sq.name;
             document.getElementById('sq-body').innerHTML = `
@@ -578,12 +596,13 @@
                 <div><span class="k">Claimed:</span> ${claimed}</div>
                 <div><span class="k">Numbers:</span> ${numbers}</div>
                 <div><span class="k">Payment:</span> ${paid}</div>
+                ${annLine}
                 <div style="margin-top:10px; color:#888; font-size:0.82rem;">To remove this square, ask the admin to clear cell #${cellId}.</div>
             `;
             document.getElementById('sq-modal').classList.add('open');
         }
         function closeSquareInfo() { document.getElementById('sq-modal').classList.remove('open'); }
-        window.addEventListener('keydown', (e) => { if (e.key === 'Escape') { closeSquareInfo(); closeRules(); } });
+        window.addEventListener('keydown', (e) => { if (e.key === 'Escape') { closeSquareInfo(); closeRules(); closePick(); } });
 
         function updateNumbersRule(data) {
             const el = document.getElementById('numbers-rule');
@@ -673,6 +692,29 @@
         function escapeHtml(s) { return String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
         function openRules() { document.getElementById('rules-modal').classList.add('open'); }
         function closeRules() { document.getElementById('rules-modal').classList.remove('open'); }
+        function openPick() {
+            document.getElementById('pick-count').value = 1;
+            document.getElementById('pick-err').innerText = '';
+            document.getElementById('pick-modal').classList.add('open');
+        }
+        function closePick() { document.getElementById('pick-modal').classList.remove('open'); }
+        function doPick() {
+            const errEl = document.getElementById('pick-err');
+            errEl.innerText = '';
+            if (isLocked) { errEl.innerText = 'The board is locked.'; return; }
+            const want = parseInt(document.getElementById('pick-count').value, 10) || 0;
+            if (want < 1) { errEl.innerText = 'Enter how many squares.'; return; }
+            const taken = new Set(((lastData && lastData.squares) || []).map(s => s.row + ',' + s.col));
+            const sel = new Set(selectedSquares.map(s => s.r + ',' + s.c));
+            const free = [];
+            for (let r = 0; r < 10; r++) for (let c = 0; c < 10; c++) { const k = r + ',' + c; if (!taken.has(k) && !sel.has(k)) free.push({ r, c }); }
+            if (!free.length) { errEl.innerText = 'No squares left.'; return; }
+            for (let i = free.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); const t = free[i]; free[i] = free[j]; free[j] = t; }
+            const n = Math.min(want, free.length);
+            for (let i = 0; i < n; i++) selectedSquares.push(free[i]);
+            closePick();
+            updateUI();
+        }
         function updateNote(data) {
             const el = document.getElementById('note-card');
             if (!el) return;

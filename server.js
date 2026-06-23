@@ -88,6 +88,10 @@ async function migrate() {
         await migrateToV9();
         await dbRun('PRAGMA user_version = 9');
     }
+    if (user_version < 10) {
+        await migrateToV10();
+        await dbRun('PRAGMA user_version = 10');
+    }
 }
 
 async function migrateToV1() {
@@ -241,6 +245,25 @@ async function migrateToV8() {
 async function migrateToV9() {
     const cols = await dbAll('PRAGMA table_info(pools)');
     if (!cols.some((c) => c.name === 'note')) await dbExec('ALTER TABLE pools ADD COLUMN note TEXT');
+}
+
+async function migrateToV10() {
+    await dbExec(`
+        CREATE TABLE IF NOT EXISTS activity (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            pool_id TEXT, text TEXT, at TEXT
+        );
+        CREATE TABLE IF NOT EXISTS annotations (
+            pool_id TEXT, row INTEGER, col INTEGER, text TEXT, icon TEXT,
+            UNIQUE(pool_id, row, col)
+        );
+    `);
+}
+
+async function logActivity(poolId, text) {
+    try {
+        await dbRun('INSERT INTO activity (pool_id, text, at) VALUES (?, ?, ?)', [poolId, text, new Date().toISOString()]);
+    } catch (e) { /* logging must never block the action */ }
 }
 
 // --- VALIDATION ---
@@ -778,6 +801,9 @@ app.get('/api/pool/:id', ah(async (req, res) => {
 
     const squares = await dbAll('SELECT row, col, name, is_paid, claimed_at FROM squares WHERE pool_id = ?', [req.params.id]);
     const scoreRows = await dbAll('SELECT period, top_score, left_score FROM scores WHERE pool_id = ?', [req.params.id]);
+    const annRows = await dbAll('SELECT row, col, text, icon FROM annotations WHERE pool_id = ?', [req.params.id]);
+    const annotations = {};
+    annRows.forEach((a) => { annotations[a.row + ',' + a.col] = { text: a.text || '', icon: a.icon || '' }; });
 
     const scores = { q1: { top: '', left: '' }, q2: { top: '', left: '' }, q3: { top: '', left: '' }, final: { top: '', left: '' } };
     scoreRows.forEach((r) => { if (scores[r.period]) scores[r.period] = { top: r.top_score || '', left: r.left_score || '' }; });
@@ -828,6 +854,7 @@ app.get('/api/pool/:id', ah(async (req, res) => {
         winners,
         currentPeriod,
         numberSets,
+        annotations,
         live,
         liveTarget,
         liveWinner,
@@ -899,6 +926,7 @@ app.post('/api/pool/:id/claim-batch', ah(async (req, res) => {
         throw e;
     }
     await maybeAutoLockFull(req.params.id);
+    if (claimed > 0) await logActivity(req.params.id, `${name} claimed ${claimed} square${claimed !== 1 ? 's' : ''}`);
     res.json({ success: true, claimed, errors });
 }));
 
@@ -908,6 +936,7 @@ app.get('/api/pool/:id/admin/check', poolAdmin, (req, res) => res.json({ ok: tru
 app.post('/api/pool/:id/admin/lock', poolAdmin, ah(async (req, res) => {
     if (req.body.locked) await lockPoolAndDraw(req.params.id);
     else await dbRun('UPDATE pools SET locked = 0 WHERE id = ?', [req.params.id]);
+    await logActivity(req.params.id, req.body.locked ? 'Locked the board' : 'Unlocked the board');
     res.json({ success: true });
 }));
 
@@ -921,6 +950,7 @@ app.post('/api/pool/:id/admin/toggle-pay', poolAdmin, ah(async (req, res) => {
     if (!stats || stats.total === 0) return res.json({ success: true });
     const newStatus = (stats.paid === stats.total) ? 0 : 1;
     await dbRun('UPDATE squares SET is_paid = ? WHERE pool_id = ? AND name = ?', [newStatus, req.params.id, name]);
+    await logActivity(req.params.id, `Marked ${name} ${newStatus === 1 ? 'paid' : 'unpaid'}`);
     res.json({ success: true, isPaid: newStatus === 1 });
 }));
 
@@ -932,6 +962,7 @@ app.post('/api/pool/:id/admin/toggle-pay-cell', poolAdmin, ah(async (req, res) =
     if (!sq) return res.status(404).json({ error: 'Square not claimed.' });
     const newStatus = sq.is_paid === 1 ? 0 : 1;
     await dbRun('UPDATE squares SET is_paid = ? WHERE pool_id = ? AND row = ? AND col = ?', [newStatus, req.params.id, row, col]);
+    await logActivity(req.params.id, `Marked cell #${row * 10 + col + 1} ${newStatus === 1 ? 'paid' : 'unpaid'}`);
     res.json({ success: true, isPaid: newStatus === 1 });
 }));
 
@@ -956,6 +987,7 @@ app.post('/api/pool/:id/admin/set-paid', poolAdmin, ah(async (req, res) => {
         }
         await dbRun('COMMIT');
     } catch (e) { await dbRun('ROLLBACK'); throw e; }
+    await logActivity(req.params.id, `${name}: marked ${paidCount}/${total} paid`);
     res.json({ success: true, paidCount, total });
 }));
 
@@ -969,6 +1001,7 @@ app.post('/api/pool/:id/admin/assign', poolAdmin, ah(async (req, res) => {
         return res.status(400).json({ error: 'Square taken.' });
     }
     await maybeAutoLockFull(req.params.id);
+    await logActivity(req.params.id, `Assigned cell #${row * 10 + col + 1} to ${name}`);
     res.json({ success: true });
 }));
 
@@ -977,11 +1010,13 @@ app.post('/api/pool/:id/admin/rename', poolAdmin, ah(async (req, res) => {
     const name = cleanName(req.body.name);
     if (!isDigit(row) || !isDigit(col) || !name) return res.status(400).json({ error: 'Invalid square or name.' });
     await dbRun('UPDATE squares SET name = ? WHERE pool_id = ? AND row = ? AND col = ?', [name, req.params.id, row, col]);
+    await logActivity(req.params.id, `Renamed cell #${row * 10 + col + 1} to ${name}`);
     res.json({ success: true });
 }));
 
 app.post('/api/pool/:id/admin/clear', poolAdmin, ah(async (req, res) => {
     await dbRun('DELETE FROM squares WHERE pool_id = ? AND row = ? AND col = ?', [req.params.id, req.body.row, req.body.col]);
+    await logActivity(req.params.id, `Cleared cell #${Number(req.body.row) * 10 + Number(req.body.col) + 1}`);
     res.json({ success: true });
 }));
 
@@ -1022,6 +1057,7 @@ app.post('/api/pool/:id/admin/reset-board', poolAdmin, ah(async (req, res) => {
     await dbRun('DELETE FROM squares WHERE pool_id = ?', [req.params.id]);
     await dbRun('DELETE FROM grid_numbers WHERE pool_id = ?', [req.params.id]);
     await dbRun('UPDATE pools SET locked = 0, top_headers = ?, left_headers = ? WHERE id = ?', [DEFAULT_HEADERS, DEFAULT_HEADERS, req.params.id]);
+    await logActivity(req.params.id, 'Wiped all squares');
     res.json({ success: true });
 }));
 
@@ -1062,6 +1098,28 @@ app.post('/api/pool/:id/admin/scores', poolAdmin, ah(async (req, res) => {
     }
     const mode = await poolMode(req.params.id);
     if (mode !== 'once') await advanceFromScores(req.params.id, mode);
+    res.json({ success: true });
+}));
+
+app.get('/api/pool/:id/admin/activity', poolAdmin, ah(async (req, res) => {
+    const rows = await dbAll('SELECT text, at FROM activity WHERE pool_id = ? ORDER BY id DESC LIMIT 100', [req.params.id]);
+    res.json({ activity: rows });
+}));
+
+app.post('/api/pool/:id/admin/annotate', poolAdmin, ah(async (req, res) => {
+    const { row, col } = req.body;
+    if (!isDigit(row) || !isDigit(col)) return res.status(400).json({ error: 'Invalid square.' });
+    const text = String(req.body.text || '').slice(0, 120);
+    const icon = String(req.body.icon || '').slice(0, 8);
+    if (!text && !icon) {
+        await dbRun('DELETE FROM annotations WHERE pool_id = ? AND row = ? AND col = ?', [req.params.id, row, col]);
+    } else {
+        await dbRun(
+            `INSERT INTO annotations (pool_id, row, col, text, icon) VALUES (?, ?, ?, ?, ?)
+             ON CONFLICT(pool_id, row, col) DO UPDATE SET text = excluded.text, icon = excluded.icon`,
+            [req.params.id, row, col, text, icon]
+        );
+    }
     res.json({ success: true });
 }));
 

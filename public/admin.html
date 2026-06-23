@@ -110,6 +110,7 @@
         .grid .pwin-badge { font-size: 0.46rem; font-weight: 900; color: #000; border-radius: 2px; padding: 0 2px; line-height: 1.4; }
         .grid .square.live-now { outline: 3px solid #fff; outline-offset: -3px; z-index: 13; }
         .grid .square.live-target { outline: 2px dashed #fff; outline-offset: -2px; color: #fff; font-weight: 900; z-index: 12; }
+        .grid .ann-icon { position: absolute; bottom: 1px; right: 2px; font-size: 0.6rem; line-height: 1; z-index: 14; pointer-events: none; }
 
         table.stats { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 0.9rem; }
         table.stats th { text-align: left; color: #888; padding: 8px; border-bottom: 1px solid #444; }
@@ -295,6 +296,14 @@
                 <div id="square-log" style="margin-top:12px;"></div>
             </details>
         </div>
+
+        <div class="panel-box">
+            <h3>7. Activity</h3>
+            <details>
+                <summary style="cursor:pointer; color:#008CFF; font-weight:600;">Show recent activity</summary>
+                <div id="activity-log" style="margin-top:12px;"></div>
+            </details>
+        </div>
         
             <br>
             <a id="back-link" href="/" style="color:#008CFF; text-decoration:none;">← Back to Public Board</a>
@@ -303,6 +312,19 @@
           <div class="admin-board">
             <div class="board-scroll"><div class="grid" id="full-grid"></div></div>
           </div>
+        </div>
+    </div>
+
+    <div id="annotate-modal" class="ui-overlay" style="display:none;">
+        <div class="ui-card">
+            <div class="ui-title" id="ann-title">Annotate</div>
+            <div id="ann-icons" style="display:flex; flex-wrap:wrap; gap:6px; margin-bottom:12px;"></div>
+            <input id="ann-text" class="ui-input" placeholder="Short note (optional)" maxlength="120">
+            <div class="ui-actions">
+                <button class="ui-btn ghost" onclick="closeAnnotate()">Cancel</button>
+                <button class="ui-btn danger" onclick="saveAnnotate(true)">Remove</button>
+                <button class="ui-btn primary" onclick="saveAnnotate(false)">Save</button>
+            </div>
         </div>
     </div>
 
@@ -390,6 +412,40 @@
             if (teamSec) teamSec.style.display = managed ? 'none' : '';
             if (scoresPanel) scoresPanel.style.display = managed ? 'none' : '';
             if (espnNote) espnNote.style.display = managed ? 'block' : 'none';
+            loadActivity();
+        }
+
+        async function loadActivity() {
+            const el = document.getElementById('activity-log');
+            if (!el) return;
+            const res = await fetch(`/api/pool/${poolId}/admin/activity`, { headers: { 'X-Admin-Token': adminToken } });
+            if (!res.ok) return;
+            const d = await res.json();
+            if (!d.activity.length) { el.innerHTML = '<div style="color:#666; font-size:0.85rem;">No activity yet.</div>'; return; }
+            el.innerHTML = `<table class="stats log">${d.activity.map(a => `<tr><td style="white-space:nowrap; color:#888;">${escapeHtml(new Date(a.at).toLocaleString())}</td><td>${escapeHtml(a.text)}</td></tr>`).join('')}</table>`;
+        }
+
+        const ANN_ICONS = ['', '🏆', '💵', '🎲', '🏈', '⭐', '❗', '🔖', '💣'];
+        let annCell = null, annIcon = '';
+        function openAnnotate(r, c) {
+            annCell = { r, c };
+            const cur = ((lastAdminData && lastAdminData.annotations) || {})[r + ',' + c] || { icon: '', text: '' };
+            annIcon = cur.icon || '';
+            document.getElementById('ann-title').innerText = 'Annotate cell #' + (r * 10 + c + 1);
+            document.getElementById('ann-text').value = cur.text || '';
+            renderAnnIcons();
+            document.getElementById('annotate-modal').style.display = 'flex';
+        }
+        function renderAnnIcons() {
+            document.getElementById('ann-icons').innerHTML = ANN_ICONS.map(ic =>
+                `<button class="ui-btn ${ic === annIcon ? 'primary' : 'ghost'}" style="padding:6px 10px; font-size:1.1rem;" onclick="pickAnnIcon('${ic}')">${ic || '∅'}</button>`).join('');
+        }
+        function pickAnnIcon(ic) { annIcon = ic; renderAnnIcons(); }
+        function closeAnnotate() { document.getElementById('annotate-modal').style.display = 'none'; }
+        async function saveAnnotate(remove) {
+            if (!annCell) return;
+            await apiCall('annotate', { row: annCell.r, col: annCell.c, text: remove ? '' : document.getElementById('ann-text').value, icon: remove ? '' : annIcon });
+            closeAnnotate();
         }
 
         function renderGrid(data) {
@@ -473,6 +529,8 @@
                         badges.innerHTML = (winMap[r + ',' + c] || []).map(q => `<span class="pwin-badge" style="background:${PERIOD_COLORS[slotForClient(data.numberMode, q)]}">${PERIOD_BADGE[q]}</span>`).join('');
                         div.appendChild(badges);
                     }
+                    const ann = (data.annotations || {})[r + ',' + c];
+                    if (ann && ann.icon) { const ic = document.createElement('span'); ic.className = 'ann-icon'; ic.textContent = ann.icon; div.appendChild(ic); }
                     if (taken) div.title = taken.name;
                     div.onclick = () => openSquareAdmin(r, c);
                     grid.appendChild(div);
@@ -576,6 +634,7 @@
                 buttons = [
                     { text: sq.is_paid === 1 ? 'Mark unpaid' : 'Mark paid', class: sq.is_paid === 1 ? 'ghost' : 'primary', value: 'pay' },
                     { text: 'Edit name', class: 'ghost', value: 'edit' },
+                    { text: 'Annotate', class: 'ghost', value: 'annotate' },
                     { text: 'Delete', class: 'danger', value: 'delete' },
                     { text: 'Close', class: 'ghost', value: 'close' }
                 ];
@@ -584,6 +643,7 @@
                         <div><span class="k">Numbers:</span> ${nums}</div>`;
                 buttons = [
                     { text: 'Assign', class: 'primary', value: 'assign' },
+                    { text: 'Annotate', class: 'ghost', value: 'annotate' },
                     { text: 'Close', class: 'ghost', value: 'close' }
                 ];
             }
@@ -600,6 +660,8 @@
             } else if (action === 'assign') {
                 const n = await uiPrompt('Assign cell to:', { okText: 'Assign' });
                 if (n && n.trim()) await apiCall('assign', { row: r, col: c, name: n.trim() });
+            } else if (action === 'annotate') {
+                openAnnotate(r, c);
             }
         }
 
