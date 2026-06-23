@@ -84,6 +84,10 @@ async function migrate() {
         await migrateToV8();
         await dbRun('PRAGMA user_version = 8');
     }
+    if (user_version < 9) {
+        await migrateToV9();
+        await dbRun('PRAGMA user_version = 9');
+    }
 }
 
 async function migrateToV1() {
@@ -232,6 +236,11 @@ async function migrateToV7() {
 async function migrateToV8() {
     const cols = await dbAll('PRAGMA table_info(pools)');
     if (!cols.some((c) => c.name === 'live_state')) await dbExec('ALTER TABLE pools ADD COLUMN live_state TEXT');
+}
+
+async function migrateToV9() {
+    const cols = await dbAll('PRAGMA table_info(pools)');
+    if (!cols.some((c) => c.name === 'note')) await dbExec('ALTER TABLE pools ADD COLUMN note TEXT');
 }
 
 // --- VALIDATION ---
@@ -834,6 +843,7 @@ app.get('/api/pool/:id', ah(async (req, res) => {
         scoreSource: pool.score_source || 'manual',
         cost: pool.cost_per_square || '0',
         venmoUrl: pool.venmo_url || '',
+        note: pool.note || '',
         paymentDeadline: pool.payment_deadline || '',
         numberMode: pool.number_mode || 'once',
         scores,
@@ -1031,6 +1041,7 @@ app.post('/api/pool/:id/admin/settings', poolAdmin, ah(async (req, res) => {
     if (req.body.name !== undefined) { sets.push('name = ?'); vals.push(cleanName(req.body.name) || 'Squares Pool'); }
     if (req.body.cost !== undefined) { sets.push('cost_per_square = ?'); vals.push(String(req.body.cost)); }
     if (req.body.venmoUrl !== undefined) { sets.push('venmo_url = ?'); vals.push(req.body.venmoUrl || null); }
+    if (req.body.note !== undefined) { sets.push('note = ?'); vals.push((req.body.note || '').slice(0, 500) || null); }
     if (req.body.numberMode !== undefined) { sets.push('number_mode = ?'); vals.push(req.body.numberMode); }
     if (req.body.paymentDeadline !== undefined) { sets.push('payment_deadline = ?'); vals.push(req.body.paymentDeadline || null); }
     if (req.body.startTime !== undefined) { sets.push('espn_start = ?'); vals.push(req.body.startTime || null); }
