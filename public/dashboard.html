@@ -3,7 +3,10 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Squares Owner Dashboard</title>
+    <title>Squares Dashboard</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+    <link rel="apple-touch-icon" href="/icon.png">
+    <meta name="theme-color" content="#121212">
     <style>
         :root {
             --bg-color: #121212;
@@ -60,10 +63,42 @@
         .board-card .meta { color: #888; font-size: 0.8rem; }
         .board-card .actions { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 4px; }
         .topbar { max-width: 560px; margin: 0 auto 18px; display: flex; justify-content: flex-end; }
+
+        /* CREATE WIZARD */
+        .wiz-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.7); z-index: 3000; display: flex; align-items: center; justify-content: center; padding: 16px; }
+        .wiz-card { background: var(--surface-color); border: 1px solid var(--border-color); border-radius: var(--radius-lg); box-shadow: 0 10px 40px rgba(0,0,0,0.6); width: 100%; max-width: 460px; padding: 22px; text-align: left; max-height: 92vh; overflow-y: auto; }
+        .wiz-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
+        .wiz-dots { display: flex; gap: 6px; }
+        .wiz-dot { width: 8px; height: 8px; border-radius: 50%; background: #444; }
+        .wiz-dot.on { background: #008CFF; }
+        .wiz-dot.done { background: #4ade80; }
+        .wiz-x { background: none; border: none; color: #888; font-size: 1.5rem; cursor: pointer; padding: 0 4px; margin: 0; line-height: 1; }
+        .wiz-x:hover { transform: none; opacity: 1; color: #fff; }
+        .wiz-title { font-size: 1.3rem; font-weight: 800; color: #fff; margin-bottom: 14px; }
+        .wiz-body label { display: block; font-size: 0.82rem; color: #aaa; margin: 12px 0 4px; }
+        .wiz-body input[type=text], .wiz-body input[type=number], .wiz-body input:not(.color-picker), .wiz-body select { width: 100%; box-sizing: border-box; margin: 0; }
+        .wiz-hint { font-size: 0.78rem; color: #777; margin-top: 4px; }
+        .wiz-nav { display: flex; justify-content: space-between; margin-top: 20px; }
+        .wiz-err { color: #ff6b6b; font-size: 0.82rem; min-height: 1em; margin-top: 8px; }
+        .wiz-choice { border: 1px solid var(--border-color); background: #262626; border-radius: 12px; padding: 14px; margin-top: 10px; cursor: pointer; transition: border-color 0.15s, background 0.15s; }
+        .wiz-choice:hover { background: #2d2d2d; }
+        .wiz-choice.sel { border-color: #008CFF; background: rgba(0,140,255,0.12); }
+        .wiz-choice .ct { font-weight: 700; color: #fff; font-size: 0.98rem; }
+        .wiz-choice .cd { color: #999; font-size: 0.82rem; margin-top: 3px; }
+        .wiz-team-row { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+        .wiz-team-row input[type=text] { flex: 1; min-width: 0; }
+        .wiz-team-row input.color-picker { flex: 0 0 38px; height: 34px; padding: 0; border: none; border-radius: 6px; }
+        .wiz-glist { max-height: 200px; overflow-y: auto; margin-top: 8px; }
+        .wiz-grow { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px solid #2a2a2a; }
+        .wiz-links { background: #252525; border: 1px solid #333; border-radius: 10px; padding: 12px; margin-top: 6px; word-break: break-all; font-size: 0.82rem; }
+        .wiz-color-pair { display: flex; gap: 16px; margin-top: 8px; flex-wrap: wrap; }
+        .wiz-cpair { display: flex; align-items: center; gap: 6px; }
+        .wiz-cpair input.color-picker { flex: 0 0 38px; height: 34px; padding: 0; border: none; border-radius: 6px; }
+        .wiz-hex { text-transform: uppercase; font-family: monospace; font-size: 0.82rem; }
     </style>
 </head>
 <body>
-    <h1>🏈 Squares</h1>
+    <h1>🏈🏀 Squares</h1>
     <div class="sub">Owner dashboard</div>
 
     <!-- SET UP (first boot) -->
@@ -89,41 +124,28 @@
         <div class="topbar"><button class="ghost small" onclick="doLogout()">Log out</button></div>
 
         <div class="panel-box">
-            <h3>New board</h3>
-            <div class="row"><span class="label">Name</span><input id="name" placeholder="Super Bowl Squares"></div>
-            <div class="row"><span class="label">Top team</span><input id="team-top" placeholder="Top" value="Top"><input type="color" id="color-top" class="color-picker" value="#002244"></div>
-            <div class="row"><span class="label">Left team</span><input id="team-left" placeholder="Left" value="Left"><input type="color" id="color-left" class="color-picker" value="#4b92db"></div>
-            <div class="row"><span class="label">$ / square</span><input id="cost" class="cost-in" type="number" value="3"></div>
-            <div class="row"><span class="label">Venmo URL</span><input id="venmo" placeholder="https://venmo.com/... (optional)"></div>
-
-            <div style="border-top:1px solid #333; margin-top:10px; padding-top:12px;">
-                <div id="dg-search">
-                <div class="muted" style="margin-bottom:8px;">Link a real game (optional) to auto-fill teams and colors:</div>
-                <div class="row">
-                    <select id="dg-league">
-                        <option value="nfl">NFL</option>
-                        <option value="ncaaf">College Football</option>
-                        <option value="nba">NBA</option>
-                        <option value="wnba">WNBA</option>
-                        <option value="ncaab">College Basketball</option>
-                    </select>
-                    <input id="dg-team" placeholder="Team (optional)" style="flex:1; min-width:0;">
-                </div>
-                <div class="row">
-                    <input type="date" id="dg-date" style="flex:1; min-width:0;">
-                    <button class="ghost" onclick="dashFindGames()">Find games</button>
-                </div>
-                <div id="dg-list" style="max-height:180px; overflow-y:auto;"></div>
-                </div>
-                <div id="dg-selected" class="muted" style="margin-top:6px;"></div>
-            </div>
-
-            <div style="text-align:right;"><button onclick="createBoard()">Create board →</button></div>
-        </div>
-
-        <div class="panel-box">
-            <h3>All boards (<span id="count">0</span>)</h3>
+            <h3 style="display:flex; align-items:center; justify-content:space-between; gap:10px;">
+                <span>All boards (<span id="count">0</span>)</span>
+                <button onclick="openWizard()">+ New board</button>
+            </h3>
             <div id="boards"></div>
+        </div>
+    </div>
+
+    <!-- CREATE WIZARD -->
+    <div id="wiz" class="wiz-overlay" style="display:none;" onclick="if(event.target===this) closeWizard()">
+        <div class="wiz-card">
+            <div class="wiz-top">
+                <div class="wiz-dots" id="wiz-dots"></div>
+                <button class="wiz-x" onclick="closeWizard()" aria-label="Close">&times;</button>
+            </div>
+            <div class="wiz-title" id="wiz-title"></div>
+            <div id="wiz-body"></div>
+            <div class="wiz-err" id="wiz-err"></div>
+            <div class="wiz-nav">
+                <button class="ghost" id="wiz-back" onclick="wizBack()">Back</button>
+                <button id="wiz-next" onclick="wizNext()">Next →</button>
+            </div>
         </div>
     </div>
 
@@ -199,7 +221,7 @@
                 return `<div class="board-card">
                     <div class="top">
                         <span class="name">${escapeHtml(p.name)}</span>
-                        <span class="meta">${p.filled}/100 filled${lockTag}</span>
+                        <span class="meta">${p.filled}/${p.total || 100} filled${lockTag}</span>
                     </div>
                     <div class="actions">
                         <button class="small" onclick="window.open('${share}','_blank')">Open board</button>
@@ -213,25 +235,18 @@
             }).join('');
         }
 
-        let selectedGame = null;
-
-        async function createBoard() {
-            const body = {
-                name: document.getElementById('name').value.trim(),
-                teamTop: document.getElementById('team-top').value.trim(),
-                teamLeft: document.getElementById('team-left').value.trim(),
-                colorTop: document.getElementById('color-top').value,
-                colorLeft: document.getElementById('color-left').value,
-                cost: document.getElementById('cost').value.trim(),
-                venmoUrl: document.getElementById('venmo').value.trim()
-            };
-            if (selectedGame) body.game = selectedGame;
-            const res = await fetch('/api/owner/pools', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Owner-Token': getToken() }, body: JSON.stringify(body) });
-            if (!res.ok) { alert('Could not create board.'); return; }
-            document.getElementById('name').value = '';
-            clearGame();
-            loadBoards();
-        }
+        // --- CREATE WIZARD ---
+        let wiz = null;
+        const GRID_OPTS = [
+            { key: 'std100', title: '10 x 10 (100 squares)', desc: 'Classic board, one digit per row and column.' },
+            { key: 'std50', title: '10 x 5 (50 squares)', desc: 'Ten columns, five rows. Each row covers two digits.' },
+            { key: 'std25', title: '5 x 5 (25 squares)', desc: 'Smaller board. Each row and column covers two digits.' },
+        ];
+        const NUM_OPTS = [
+            { key: 'once', title: 'Static numbers', desc: 'One set of numbers drawn at lock, kept all game.' },
+            { key: 'per_quarter', title: 'Re-draw each quarter', desc: 'Fresh numbers for Q1, Q2, Q3 and the final.' },
+            { key: 'per_half', title: 'Re-draw at halftime', desc: 'One set for the first half, another for the second.' },
+        ];
 
         function fmtLocal(iso) {
             if (!iso) return '';
@@ -240,11 +255,165 @@
             return d.toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
         }
 
-        async function dashFindGames() {
-            const league = document.getElementById('dg-league').value;
-            const team = document.getElementById('dg-team').value.trim();
-            const date = (document.getElementById('dg-date').value || '').replace(/-/g, '');
-            const list = document.getElementById('dg-list');
+        function openWizard() {
+            wiz = {
+                i: 0, name: '', source: null, game: null, gameLabel: '',
+                teamTop: 'Top', teamLeft: 'Left',
+                colorTop: '#002244', colorTop2: '#1c5fb0', colorLeft: '#7a0000', colorLeft2: '#e23b3b',
+                numberMode: 'once', gridType: 'std100', cost: '5', venmo: '',
+            };
+            document.getElementById('wiz').style.display = 'flex';
+            wizRender();
+        }
+        function closeWizard() { document.getElementById('wiz').style.display = 'none'; wiz = null; }
+
+        function wizSteps() {
+            const s = ['name', 'source'];
+            if (wiz.source === 'auto') s.push('game');
+            else if (wiz.source === 'manual') s.push('teams');
+            s.push('numbers', 'grid', 'price');
+            return s;
+        }
+
+        const WIZ = {
+            name: {
+                title: 'Name your board',
+                render: () => `<label>Board name</label><input type="text" id="wz-name" value="${escapeHtml(wiz.name)}" placeholder="Super Bowl Squares" onkeyup="if(event.key==='Enter') wizNext()">`,
+                save: () => { wiz.name = document.getElementById('wz-name').value.trim(); if (!wiz.name) return 'Give the board a name.'; },
+            },
+            source: {
+                title: 'How are the teams set?',
+                render: () => `
+                    <div class="wiz-choice ${wiz.source==='auto'?'sel':''}" onclick="wizPickSource('auto')"><div class="ct">Pick a real game</div><div class="cd">Search ESPN and auto-fill team names, colors, kickoff time and live scores.</div></div>
+                    <div class="wiz-choice ${wiz.source==='manual'?'sel':''}" onclick="wizPickSource('manual')"><div class="ct">Set it up manually</div><div class="cd">Type the two team names and pick their colors yourself.</div></div>`,
+                save: () => { if (!wiz.source) return 'Pick one to continue.'; },
+            },
+            game: {
+                title: 'Pick the game',
+                render: () => `
+                    <select id="wz-league">
+                        <option value="nfl">NFL</option><option value="ncaaf">College Football</option>
+                        <option value="nba">NBA</option><option value="wnba">WNBA</option><option value="ncaab">College Basketball</option>
+                    </select>
+                    <div style="display:flex; gap:8px; margin-top:8px; align-items:center;"><input type="text" id="wz-team" placeholder="Team name (optional)" style="flex:1 1 auto; min-width:0; width:auto;"><input type="date" id="wz-date" style="flex:0 0 auto; width:auto;"></div>
+                    <div style="text-align:right; margin-top:8px;"><button class="ghost small" onclick="wizFindGames()">Find games</button></div>
+                    <div class="wiz-glist" id="wz-glist"></div>
+                    <div class="wiz-hint" id="wz-gsel">${wiz.game ? 'Selected: ' + escapeHtml(wiz.gameLabel) : 'No game selected yet.'}</div>`,
+                onShow: () => { if (wiz.game) document.getElementById('wz-league').value = wiz.game.league; },
+                save: () => { if (!wiz.game) return 'Find and choose a game, or go Back to set teams manually.'; },
+            },
+            teams: {
+                title: 'Teams and colors',
+                render: () => `
+                    <label>Auto-find colors from</label>
+                    <select id="wz-clg">
+                        <option value="nfl">NFL</option><option value="ncaaf">College Football</option>
+                        <option value="nba">NBA</option><option value="wnba">WNBA</option><option value="ncaab">College Basketball</option>
+                    </select>
+                    <label>Top team (columns)</label>
+                    <div style="display:flex; gap:8px; align-items:center;"><input type="text" id="wz-tt" value="${escapeHtml(wiz.teamTop)}" style="flex:1 1 auto; min-width:0; width:auto;"><button class="ghost small" type="button" onclick="wizFindColors('top')">Find colors</button></div>
+                    <div class="wiz-color-pair">${colorPair('ct', wiz.colorTop)}${colorPair('ct2', wiz.colorTop2)}</div>
+                    <label>Left team (rows)</label>
+                    <div style="display:flex; gap:8px; align-items:center;"><input type="text" id="wz-tl" value="${escapeHtml(wiz.teamLeft)}" style="flex:1 1 auto; min-width:0; width:auto;"><button class="ghost small" type="button" onclick="wizFindColors('left')">Find colors</button></div>
+                    <div class="wiz-color-pair">${colorPair('cl', wiz.colorLeft)}${colorPair('cl2', wiz.colorLeft2)}</div>
+                    <div class="wiz-hint" id="wz-color-note">Pick colors, paste hex codes, or auto-find a real team's colors. Two each make a gradient.</div>`,
+                save: () => {
+                    wiz.teamTop = document.getElementById('wz-tt').value.trim() || 'Top';
+                    wiz.teamLeft = document.getElementById('wz-tl').value.trim() || 'Left';
+                    wiz.colorTop = document.getElementById('wz-ct').value; wiz.colorTop2 = document.getElementById('wz-ct2').value;
+                    wiz.colorLeft = document.getElementById('wz-cl').value; wiz.colorLeft2 = document.getElementById('wz-cl2').value;
+                },
+            },
+            numbers: {
+                title: 'Numbers',
+                render: () => NUM_OPTS.map(o => `<div class="wiz-choice ${wiz.numberMode===o.key?'sel':''}" onclick="wizPick('numberMode','${o.key}')"><div class="ct">${o.title}</div><div class="cd">${o.desc}</div></div>`).join(''),
+                save: () => {},
+            },
+            grid: {
+                title: 'Board size',
+                render: () => GRID_OPTS.map(o => `<div class="wiz-choice ${wiz.gridType===o.key?'sel':''}" onclick="wizPick('gridType','${o.key}')"><div class="ct">${o.title}</div><div class="cd">${o.desc}</div></div>`).join(''),
+                save: () => {},
+            },
+            price: {
+                title: 'Price',
+                render: () => `
+                    <label>Cost per square ($)</label><input type="number" id="wz-cost" min="0" value="${escapeHtml(wiz.cost)}">
+                    <label>Venmo link (optional)</label><input type="text" id="wz-venmo" value="${escapeHtml(wiz.venmo)}" placeholder="https://venmo.com/u/...">`,
+                save: () => { wiz.cost = (document.getElementById('wz-cost').value || '0').trim(); wiz.venmo = document.getElementById('wz-venmo').value.trim(); },
+            },
+        };
+
+        function wizPickSource(s) { wiz.source = s; wizRender(); }
+        function wizPick(field, val) { wiz[field] = val; wizRender(); }
+
+        function colorPair(id, val) {
+            return `<span class="wiz-cpair"><input type="color" class="color-picker" id="wz-${id}" value="${val}" oninput="wizHexFromPicker('${id}')"><input type="text" class="wiz-hex" id="wz-${id}-hex" value="${val}" maxlength="7" placeholder="#000000" style="width:84px; flex:0 0 auto;" oninput="wizPickerFromHex('${id}')"></span>`;
+        }
+        function wizHexFromPicker(id) { document.getElementById('wz-' + id + '-hex').value = document.getElementById('wz-' + id).value.toUpperCase(); }
+        function wizPickerFromHex(id) {
+            const v = document.getElementById('wz-' + id + '-hex').value.trim();
+            if (/^#[0-9a-fA-F]{6}$/.test(v)) document.getElementById('wz-' + id).value = v;
+        }
+        function setWizColor(id, hex) {
+            if (!hex) return;
+            document.getElementById('wz-' + id).value = hex;
+            document.getElementById('wz-' + id + '-hex').value = hex.toUpperCase();
+        }
+        async function wizFindColors(which) {
+            const nameEl = document.getElementById(which === 'top' ? 'wz-tt' : 'wz-tl');
+            const ids = which === 'top' ? ['ct', 'ct2'] : ['cl', 'cl2'];
+            const team = nameEl.value.trim();
+            const note = document.getElementById('wz-color-note');
+            if (!team) { note.innerText = 'Type a team name first.'; return; }
+            note.innerText = 'Looking up colors...';
+            try {
+                const league = document.getElementById('wz-clg').value;
+                const r = await fetch(`/api/owner/team-colors?league=${league}&team=${encodeURIComponent(team)}`, { headers: { 'X-Owner-Token': getToken() } });
+                const d = await r.json();
+                if (!d.team) { note.innerText = `No team matching "${team}" in that league.`; return; }
+                setWizColor(ids[0], d.team.color);
+                setWizColor(ids[1], d.team.color2);
+                note.innerText = `Found ${d.team.name}.`;
+            } catch (e) { note.innerText = 'Could not look up colors.'; }
+        }
+
+        function wizRender() {
+            const steps = wizSteps();
+            if (wiz.i >= steps.length) wiz.i = steps.length - 1;
+            const key = steps[wiz.i];
+            const def = WIZ[key];
+            document.getElementById('wiz-dots').innerHTML = steps.map((s, idx) => `<span class="wiz-dot ${idx===wiz.i?'on':''} ${idx<wiz.i?'done':''}"></span>`).join('');
+            document.getElementById('wiz-title').innerText = def.title;
+            const body = document.getElementById('wiz-body'); body.className = 'wiz-body';
+            body.innerHTML = def.render();
+            document.getElementById('wiz-err').innerText = '';
+            document.getElementById('wiz-back').style.visibility = wiz.i === 0 ? 'hidden' : 'visible';
+            const next = document.getElementById('wiz-next');
+            next.innerText = (key === 'price') ? 'Create board ✓' : 'Next →';
+            next.onclick = wizNext;
+            if (def.onShow) def.onShow();
+            const first = body.querySelector('input[type=text], input[type=number]');
+            if (first) setTimeout(() => first.focus(), 30);
+        }
+
+        function wizBack() { if (wiz.i > 0) { wiz.i--; wizRender(); } }
+        async function wizNext() {
+            const steps = wizSteps();
+            const key = steps[wiz.i];
+            const def = WIZ[key];
+            const err = def.save ? def.save() : null;
+            if (err) { document.getElementById('wiz-err').innerText = err; return; }
+            if (key === 'price') { await wizCreate(); return; }
+            const newSteps = wizSteps();
+            wiz.i = newSteps.indexOf(key) + 1;
+            wizRender();
+        }
+
+        async function wizFindGames() {
+            const league = document.getElementById('wz-league').value;
+            const team = document.getElementById('wz-team').value.trim();
+            const date = (document.getElementById('wz-date').value || '').replace(/-/g, '');
+            const list = document.getElementById('wz-glist');
             list.innerHTML = '<div class="muted" style="padding:6px 0;">Loading...</div>';
             const params = new URLSearchParams({ league });
             if (team) params.set('team', team); else if (date) params.set('date', date);
@@ -252,25 +421,54 @@
             if (!res.ok) { list.innerHTML = '<div class="muted">Could not load games.</div>'; return; }
             const d = await res.json();
             if (!d.games.length) { list.innerHTML = `<div class="muted">${escapeHtml(d.note || 'No games found.')}</div>`; return; }
-            list.innerHTML = d.games.map(g => `<div style="display:flex; align-items:center; gap:8px; padding:5px 0; border-bottom:1px solid #2a2a2a;">
-                <button class="ghost" style="padding:4px 10px; font-size:0.75rem;" onclick="pickDashGame('${league}','${g.espnId}','${escapeJs(g.label)}')">Use</button>
+            list.innerHTML = d.games.map(g => `<div class="wiz-grow">
+                <button class="ghost small" onclick="wizUseGame('${league}','${g.espnId}','${escapeJs(g.label)}')">Use</button>
                 <span style="font-size:0.82rem;">${escapeHtml(g.label)}</span>
-                <span class="muted" style="font-size:0.74rem; margin-left:auto; text-align:right;">${escapeHtml(fmtLocal(g.date))}</span>
+                <span class="muted" style="font-size:0.72rem; margin-left:auto; text-align:right;">${escapeHtml(fmtLocal(g.date))}</span>
             </div>`).join('');
         }
-
-        function pickDashGame(league, espnId, label) {
-            selectedGame = { league, espnId };
-            document.getElementById('dg-selected').innerHTML = `Selected: <strong style="color:#4ade80;">${escapeHtml(label)}</strong> &middot; <a href="#" onclick="clearGame();return false;" style="color:#008CFF;">change</a>`;
-            document.getElementById('dg-list').innerHTML = '';
-            const s = document.getElementById('dg-search'); if (s) s.style.display = 'none';
+        function wizUseGame(league, espnId, label) {
+            wiz.game = { league, espnId };
+            wiz.gameLabel = label;
+            document.getElementById('wz-glist').innerHTML = '';
+            document.getElementById('wz-gsel').innerHTML = `Selected: <strong style="color:#4ade80;">${escapeHtml(label)}</strong>`;
         }
 
-        function clearGame() {
-            selectedGame = null;
-            const sel = document.getElementById('dg-selected'); if (sel) sel.innerHTML = '';
-            const list = document.getElementById('dg-list'); if (list) list.innerHTML = '';
-            const s = document.getElementById('dg-search'); if (s) s.style.display = '';
+        async function wizCreate() {
+            const body = {
+                name: wiz.name, cost: wiz.cost, venmoUrl: wiz.venmo,
+                numberMode: wiz.numberMode, gridType: wiz.gridType,
+            };
+            if (wiz.source === 'auto' && wiz.game) body.game = wiz.game;
+            if (wiz.source === 'manual') {
+                body.teamTop = wiz.teamTop; body.teamLeft = wiz.teamLeft;
+                body.colorTop = wiz.colorTop; body.colorTop2 = wiz.colorTop2;
+                body.colorLeft = wiz.colorLeft; body.colorLeft2 = wiz.colorLeft2;
+            }
+            const next = document.getElementById('wiz-next');
+            next.innerText = 'Creating...'; next.onclick = null;
+            const res = await fetch('/api/owner/pools', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Owner-Token': getToken() }, body: JSON.stringify(body) });
+            if (!res.ok) { document.getElementById('wiz-err').innerText = 'Could not create the board.'; next.innerText = 'Create board ✓'; next.onclick = wizNext; return; }
+            const d = await res.json();
+            wizShowDone(d);
+            loadBoards();
+        }
+        function wizShowDone(d) {
+            const origin = location.origin;
+            const share = origin + d.shareUrl, admin = origin + d.adminUrl;
+            document.getElementById('wiz-dots').innerHTML = '';
+            document.getElementById('wiz-title').innerText = 'Board created';
+            document.getElementById('wiz-body').innerHTML = `
+                <div style="color:#4ade80; margin-bottom:10px;">Your board is ready.</div>
+                <label>Player link</label><div class="wiz-links">${escapeHtml(share)}</div>
+                <div style="margin:6px 0 12px;"><button class="ghost small" onclick="copyText('${share}', this)">Copy player link</button></div>
+                <label>Admin link (keep this private)</label><div class="wiz-links">${escapeHtml(admin)}</div>
+                <div style="margin-top:6px;"><button class="ghost small" onclick="copyText('${admin}', this)">Copy admin link</button></div>`;
+            document.getElementById('wiz-err').innerText = '';
+            document.getElementById('wiz-back').style.visibility = 'hidden';
+            const next = document.getElementById('wiz-next');
+            next.innerText = 'Done';
+            next.onclick = closeWizard;
         }
 
         async function deleteBoard(id, name) {
@@ -279,10 +477,30 @@
             loadBoards();
         }
 
+        function fallbackCopy(text) {
+            try {
+                const ta = document.createElement('textarea');
+                ta.value = text;
+                ta.style.position = 'fixed';
+                ta.style.top = '-9999px';
+                document.body.appendChild(ta);
+                ta.focus(); ta.select();
+                const ok = document.execCommand('copy');
+                document.body.removeChild(ta);
+                return ok;
+            } catch (e) { return false; }
+        }
         function copyText(text, btn) {
-            navigator.clipboard.writeText(text);
-            const old = btn.innerText; btn.innerText = 'Copied ✓';
-            setTimeout(() => { btn.innerText = old; }, 1400);
+            // navigator.clipboard only works in secure contexts; fall back for plain-http hosts.
+            const done = (ok) => {
+                const old = btn.innerText; btn.innerText = ok ? 'Copied ✓' : 'Press Ctrl+C';
+                setTimeout(() => { btn.innerText = old; }, 1400);
+            };
+            if (navigator.clipboard && window.isSecureContext) {
+                navigator.clipboard.writeText(text).then(() => done(true)).catch(() => done(fallbackCopy(text)));
+            } else {
+                done(fallbackCopy(text));
+            }
         }
         function showQR(url, name) {
             document.getElementById('qr-title').innerText = name;

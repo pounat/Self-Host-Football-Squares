@@ -1,0 +1,15 @@
+services:
+  squares:
+    build: .
+    container_name: squares
+    ports:
+      - "3000:3000"
+    environment:
+      - PORT=3000
+      - DB_PATH=/data/squares.db
+    volumes:
+      - squares-data:/data
+    restart: unless-stopped
+
+volumes:
+  squares-data:

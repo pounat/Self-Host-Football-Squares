@@ -1,0 +1,10 @@
+node_modules
+npm-debug.log
+squares.db
+squares.db.bak
+.git
+.gitignore
+.DS_Store
+Dockerfile
+docker-compose.yml
+README.md

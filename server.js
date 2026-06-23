@@ -3,11 +3,12 @@ const sqlite3 = require('sqlite3').verbose();
 const bodyParser = require('body-parser');
 const crypto = require('crypto');
 const path = require('path');
+const fs = require('fs');
 
 const app = express();
-const db = new sqlite3.Database('./squares.db');
+const db = new sqlite3.Database(process.env.DB_PATH || './squares.db');
 
-const PORT = 3000;
+const PORT = process.env.PORT || 3000;
 const DEFAULT_HEADERS = JSON.stringify(['?', '?', '?', '?', '?', '?', '?', '?', '?', '?']);
 
 // --- PROMISE HELPERS ---
@@ -18,6 +19,25 @@ const dbExec = (sql) => new Promise((res, rej) => db.exec(sql, (e) => e ? rej(e)
 
 // Wrap async route handlers so rejected promises become 500s instead of crashing.
 const ah = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch((e) => res.status(500).json({ error: e.message }));
+
+// --- LIVE STREAM (Server-Sent Events) ---
+// One long-lived connection per viewer, grouped by pool. Pushes board changes
+// and chat messages instantly instead of polling. Plain HTTP, and a reverse
+// proxy like Caddy streams text/event-stream straight through.
+const streams = new Map(); // poolId -> Set<res>
+function sseSend(res, event, data) {
+    try {
+        res.write(`event: ${event}\n`);
+        res.write(`data: ${JSON.stringify(data)}\n\n`);
+    } catch (e) { /* a dead connection is cleaned up by its own close handler */ }
+}
+function broadcast(poolId, event, data) {
+    const set = streams.get(poolId);
+    if (!set) return;
+    for (const res of set) sseSend(res, event, data);
+}
+// "Something about this board changed, refetch it."
+function bump(poolId) { broadcast(poolId, 'board', {}); }
 
 // --- ID / TOKEN GENERATION ---
 const ALPHA = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
@@ -91,6 +111,30 @@ async function migrate() {
     if (user_version < 10) {
         await migrateToV10();
         await dbRun('PRAGMA user_version = 10');
+    }
+    if (user_version < 11) {
+        await migrateToV11();
+        await dbRun('PRAGMA user_version = 11');
+    }
+    if (user_version < 12) {
+        await migrateToV12();
+        await dbRun('PRAGMA user_version = 12');
+    }
+    if (user_version < 13) {
+        await migrateToV13();
+        await dbRun('PRAGMA user_version = 13');
+    }
+    if (user_version < 14) {
+        await migrateToV14();
+        await dbRun('PRAGMA user_version = 14');
+    }
+    if (user_version < 15) {
+        await migrateToV15();
+        await dbRun('PRAGMA user_version = 15');
+    }
+    if (user_version < 16) {
+        await migrateToV16();
+        await dbRun('PRAGMA user_version = 16');
     }
 }
 
@@ -260,6 +304,57 @@ async function migrateToV10() {
     `);
 }
 
+async function migrateToV11() {
+    const cols = await dbAll('PRAGMA table_info(pools)');
+    if (!cols.some((c) => c.name === 'live_done')) await dbExec('ALTER TABLE pools ADD COLUMN live_done INTEGER DEFAULT 0');
+}
+
+async function migrateToV12() {
+    await dbExec(`
+        CREATE TABLE IF NOT EXISTS messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            pool_id TEXT NOT NULL,
+            sender TEXT,
+            body TEXT NOT NULL,
+            is_admin INTEGER DEFAULT 0,
+            created_at INTEGER
+        );
+    `);
+    await dbExec('CREATE INDEX IF NOT EXISTS idx_messages_pool ON messages(pool_id, id)');
+}
+
+async function migrateToV13() {
+    await dbExec(`
+        CREATE TABLE IF NOT EXISTS announcements (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            pool_id TEXT NOT NULL,
+            body TEXT NOT NULL,
+            created_at INTEGER
+        );
+    `);
+    await dbExec('CREATE INDEX IF NOT EXISTS idx_announcements_pool ON announcements(pool_id, id)');
+}
+
+async function migrateToV14() {
+    const cols = await dbAll('PRAGMA table_info(squares)');
+    if (!cols.some((c) => c.name === 'nickname')) await dbExec('ALTER TABLE squares ADD COLUMN nickname TEXT');
+}
+
+async function migrateToV15() {
+    const cols = await dbAll('PRAGMA table_info(pools)');
+    if (!cols.some((c) => c.name === 'grid_cols')) await dbExec('ALTER TABLE pools ADD COLUMN grid_cols INTEGER DEFAULT 10');
+    if (!cols.some((c) => c.name === 'grid_rows')) await dbExec('ALTER TABLE pools ADD COLUMN grid_rows INTEGER DEFAULT 10');
+}
+
+// Sticky notes replaced the one-time announcement popups and the single board note.
+// Carry any existing single note into the notes list so it is not lost.
+async function migrateToV16() {
+    const pools = await dbAll("SELECT id, note FROM pools WHERE note IS NOT NULL AND TRIM(note) != ''");
+    for (const p of pools) {
+        await dbRun('INSERT INTO announcements (pool_id, body, created_at) VALUES (?, ?, ?)', [p.id, p.note, Date.now()]);
+    }
+}
+
 async function logActivity(poolId, text) {
     try {
         await dbRun('INSERT INTO activity (pool_id, text, at) VALUES (?, ?, ?)', [poolId, text, new Date().toISOString()]);
@@ -284,7 +379,9 @@ const lastDigit = (v) => {
 // score square is empty, the winner is the next filled square reading
 // left-to-right, top-to-bottom (wrapping). Kept generic so board size and
 // per-period number sets can slot in later.
-function computeWinners(squares, scores, mode, slotsMap) {
+function computeWinners(squares, scores, mode, slotsMap, cols, rows) {
+    cols = cols || 10;
+    rows = rows || 10;
     const winners = {};
     for (const q of ['q1', 'q2', 'q3', 'final']) {
         const s = scores[q];
@@ -297,18 +394,18 @@ function computeWinners(squares, scores, mode, slotsMap) {
         if (!hdr) continue; // this period's numbers have not been drawn yet
         const topHeaders = hdr.top;
         const leftHeaders = hdr.left;
-        const c = topHeaders.indexOf(dTop);
-        const r = leftHeaders.indexOf(dLeft);
+        const c = slotIndexOf(topHeaders, dTop);
+        const r = slotIndexOf(leftHeaders, dLeft);
         if (c === -1 || r === -1) continue;
 
         let searchR = r;
         let searchC = c;
         let winner = null;
-        for (let i = 0; i < 100; i++) {
+        for (let i = 0; i < cols * rows; i++) {
             const found = squares.find((sq) => sq.row === searchR && sq.col === searchC);
-            if (found) { winner = { r: searchR, c: searchC, name: found.name }; break; }
+            if (found) { winner = { r: searchR, c: searchC, name: found.nickname || found.name }; break; }
             searchC++;
-            if (searchC > 9) { searchC = 0; searchR++; if (searchR > 9) searchR = 0; }
+            if (searchC >= cols) { searchC = 0; searchR++; if (searchR >= rows) searchR = 0; }
         }
         winners[q] = {
             target: { r, c },
@@ -388,6 +485,8 @@ async function espnTeams(league) {
         abbrev: t.team.abbreviation || '',
         location: t.team.location || '',
         nick: t.team.name || '',
+        color: t.team.color ? '#' + t.team.color : '',
+        altColor: t.team.alternateColor ? '#' + t.team.alternateColor : '',
     }));
     teamCache[league] = teams;
     return teams;
@@ -495,7 +594,7 @@ async function linkGameToPool(poolId, league, espnId) {
     await dbRun(
         `UPDATE pools SET team_top = ?, color_top = ?, color_top2 = ?,
             team_left = ?, color_left = ?, color_left2 = ?,
-            espn_league = ?, espn_event_id = ?, espn_start = ?, score_source = 'live' WHERE id = ?`,
+            espn_league = ?, espn_event_id = ?, espn_start = ?, score_source = 'live', live_done = 0 WHERE id = ?`,
         [
             g.away.name, g.away.color || '#333', g.away.altColor || g.away.color || '#555',
             g.home.name, g.home.color || '#333', g.home.altColor || g.home.color || '#555',
@@ -530,19 +629,23 @@ async function applyLiveScores(poolId, g) {
     }
     // Current live state for the on-board scoreboard and the "currently winning" highlight.
     const live = JSON.stringify({ top: away.score, left: home.score, period: g.period, state: g.state, statusDetail: g.statusDetail });
-    await dbRun('UPDATE pools SET live_state = ? WHERE id = ?', [live, poolId]);
+    // Once a game is final, mark it done so the poll stops fetching it.
+    await dbRun('UPDATE pools SET live_state = ?, live_done = ? WHERE id = ?', [live, finalState ? 1 : 0, poolId]);
 }
 
 async function pollLiveScores() {
     let pools;
     try {
-        pools = await dbAll("SELECT id, espn_league, espn_event_id, number_mode, locked FROM pools WHERE score_source = 'live' AND espn_event_id IS NOT NULL AND espn_league IS NOT NULL");
+        pools = await dbAll("SELECT id, espn_league, espn_event_id, number_mode, locked, espn_start FROM pools WHERE score_source = 'live' AND espn_event_id IS NOT NULL AND espn_league IS NOT NULL AND (live_done IS NULL OR live_done = 0)");
     } catch (e) { return; }
     if (!pools.length) return;
     // Fetch each distinct game from ESPN once per tick, then apply to every board using it.
+    const now = Date.now();
     const cache = {};
     for (const p of pools) {
         if (!LEAGUES[p.espn_league]) continue;
+        // Skip games more than 2 minutes from kickoff (no live data yet; auto-lock handles start).
+        if (p.espn_start) { const t = new Date(p.espn_start).getTime(); if (!isNaN(t) && t > now + 120000) continue; }
         const key = p.espn_league + ':' + p.espn_event_id;
         try {
             if (!(key in cache)) cache[key] = await espnSummary(p.espn_league, p.espn_event_id);
@@ -551,6 +654,7 @@ async function pollLiveScores() {
             await applyLiveScores(p.id, g);
             const mode = p.number_mode || 'once';
             if (p.locked === 1 && mode !== 'once') await autoAdvanceForPeriod(p.id, mode, g.period);
+            bump(p.id);
         } catch (e) { cache[key] = null; /* skip */ }
     }
 }
@@ -562,7 +666,14 @@ function slotFor(mode, period) {
     if (mode === 'per_half') return (period === 'q1' || period === 'q2') ? 'h1' : 'h2';
     return 'all';
 }
-function shuffle10() {
+// Grid types: a header axis has either 10 slots (one digit each) or 5 slots
+// (two digits each). squares = cols * rows.
+const GRID_TYPES = {
+    std100: { cols: 10, rows: 10 },
+    std50: { cols: 10, rows: 5 },
+    std25: { cols: 5, rows: 5 },
+};
+function shuffleDigits() {
     const arr = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9];
     for (let i = arr.length - 1; i > 0; i--) {
         const j = Math.floor(Math.random() * (i + 1));
@@ -570,11 +681,44 @@ function shuffle10() {
     }
     return arr;
 }
+// Build one axis with `slotCount` headers. 10 slots: a single digit each.
+// 5 slots: two digits each (stored as a 2-element array).
+function drawAxis(slotCount) {
+    const digits = shuffleDigits();
+    const per = Math.max(1, Math.round(10 / slotCount));
+    const slots = [];
+    for (let i = 0; i < slotCount; i++) {
+        const group = digits.slice(i * per, i * per + per);
+        slots.push(group.length === 1 ? group[0] : group);
+    }
+    return slots;
+}
+function placeholderHeaders(slotCount) { return Array(Math.max(1, slotCount)).fill('?'); }
+// Index of the slot whose digit(s) contain `digit`. Handles single-digit (number)
+// and grouped (array) headers, and undrawn ('?') headers (returns -1).
+function slotIndexOf(headers, digit) {
+    for (let i = 0; i < headers.length; i++) {
+        const el = headers[i];
+        if (Array.isArray(el)) { if (el.includes(digit)) return i; }
+        else if (el === digit) return i;
+    }
+    return -1;
+}
+async function poolDims(poolId) {
+    const pool = await dbGet('SELECT grid_cols, grid_rows FROM pools WHERE id = ?', [poolId]);
+    return { cols: (pool && pool.grid_cols) || 10, rows: (pool && pool.grid_rows) || 10 };
+}
+async function resetHeaders(poolId) {
+    const { cols, rows } = await poolDims(poolId);
+    await dbRun('UPDATE pools SET top_headers = ?, left_headers = ? WHERE id = ?',
+        [JSON.stringify(placeholderHeaders(cols)), JSON.stringify(placeholderHeaders(rows)), poolId]);
+}
 // Draw (or re-draw) one slot's numbers and mirror them to the pool's current
 // top/left headers, which are what the board displays.
 async function setSlotNumbers(poolId, slot) {
-    const top = JSON.stringify(shuffle10());
-    const left = JSON.stringify(shuffle10());
+    const { cols, rows } = await poolDims(poolId);
+    const top = JSON.stringify(drawAxis(cols));
+    const left = JSON.stringify(drawAxis(rows));
     await dbRun(
         `INSERT INTO grid_numbers (pool_id, slot, top_headers, left_headers) VALUES (?, ?, ?, ?)
          ON CONFLICT(pool_id, slot) DO UPDATE SET top_headers = excluded.top_headers, left_headers = excluded.left_headers`,
@@ -602,7 +746,7 @@ async function nextSlot(poolId, mode) {
 async function numbersAreDrawn(poolId) {
     const pool = await dbGet('SELECT top_headers FROM pools WHERE id = ?', [poolId]);
     const top = JSON.parse((pool && pool.top_headers) || DEFAULT_HEADERS);
-    return Array.isArray(top) && top.length === 10 && top.every((n) => typeof n === 'number');
+    return Array.isArray(top) && top.length > 0 && top.every((n) => typeof n === 'number' || Array.isArray(n));
 }
 async function poolMode(poolId) {
     const pool = await dbGet('SELECT number_mode FROM pools WHERE id = ?', [poolId]);
@@ -619,10 +763,12 @@ async function drawNumbersIfNeeded(poolId) {
 async function lockPoolAndDraw(poolId) {
     await dbRun('UPDATE pools SET locked = 1 WHERE id = ?', [poolId]);
     await drawNumbersIfNeeded(poolId);
+    bump(poolId);
 }
 async function maybeAutoLockFull(poolId) {
     const row = await dbGet('SELECT COUNT(*) AS c FROM squares WHERE pool_id = ?', [poolId]);
-    if (row && row.c >= 100) await lockPoolAndDraw(poolId);
+    const { cols, rows } = await poolDims(poolId);
+    if (row && row.c >= cols * rows) await lockPoolAndDraw(poolId);
 }
 async function autoLockStartedGames() {
     let pools;
@@ -682,8 +828,38 @@ app.use(bodyParser.json());
 app.use(express.static('public', { index: false }));
 
 // --- PAGES ---
+function escapeAttr(s) {
+    return String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+}
+let PLAYER_HTML = '';
+try { PLAYER_HTML = fs.readFileSync(path.join(__dirname, 'public', 'index.html'), 'utf8'); } catch (e) { /* fall back to sendFile */ }
+
 app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'public', 'dashboard.html')));
-app.get('/p/:id', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
+// Inject per-board link-preview tags so a shared link shows the board name and a card image.
+app.get('/p/:id', ah(async (req, res) => {
+    if (!PLAYER_HTML) return res.sendFile(path.join(__dirname, 'public', 'index.html'));
+    const pool = await dbGet('SELECT name, team_top, team_left, cost_per_square FROM pools WHERE id = ?', [req.params.id]);
+    const proto = String(req.get('x-forwarded-proto') || req.protocol || 'http').split(',')[0].trim();
+    const base = proto + '://' + (req.get('host') || ('localhost:' + PORT));
+    const name = (pool && pool.name) ? pool.name : 'Squares';
+    const parts = [];
+    if (pool && pool.team_top && pool.team_left && pool.team_top !== 'Top' && pool.team_left !== 'Left') parts.push(pool.team_top + ' vs ' + pool.team_left);
+    if (pool && pool.cost_per_square) parts.push('$' + pool.cost_per_square + ' per square');
+    parts.push('Tap a square to claim it.');
+    const desc = parts.join(' · ');
+    const og = [
+        '<meta property="og:title" content="' + escapeAttr(name) + '">',
+        '<meta property="og:description" content="' + escapeAttr(desc) + '">',
+        '<meta property="og:image" content="' + base + '/og.png">',
+        '<meta property="og:type" content="website">',
+        '<meta property="og:url" content="' + base + '/p/' + escapeAttr(req.params.id) + '">',
+        '<meta name="twitter:card" content="summary_large_image">',
+        '<meta name="twitter:title" content="' + escapeAttr(name) + '">',
+        '<meta name="twitter:description" content="' + escapeAttr(desc) + '">',
+        '<meta name="twitter:image" content="' + base + '/og.png">',
+    ].join('\n    ');
+    res.set('Content-Type', 'text/html; charset=utf-8').send(PLAYER_HTML.replace('<!--OG-->', og));
+}));
 app.get('/p/:id/admin', (req, res) => res.sendFile(path.join(__dirname, 'public', 'admin.html')));
 
 // --- POOL AUTH ---
@@ -750,13 +926,14 @@ app.get('/api/owner/session', ownerAuth, (req, res) => res.json({ ok: true }));
 // --- OWNER: manage all pools ---
 app.get('/api/owner/pools', ownerAuth, ah(async (req, res) => {
     const pools = await dbAll(`
-        SELECT p.id, p.name, p.admin_token, p.locked, p.created_at,
+        SELECT p.id, p.name, p.admin_token, p.locked, p.created_at, p.grid_cols, p.grid_rows,
                (SELECT COUNT(*) FROM squares s WHERE s.pool_id = p.id) AS filled
         FROM pools p ORDER BY p.created_at DESC
     `);
     res.json({
         pools: pools.map((p) => ({
             id: p.id, name: p.name, locked: p.locked === 1, created: p.created_at, filled: p.filled,
+            total: ((p.grid_cols || 10) * (p.grid_rows || 10)),
             shareUrl: `/p/${p.id}`, adminUrl: `/p/${p.id}/admin#${p.admin_token}`,
         })),
     });
@@ -764,20 +941,39 @@ app.get('/api/owner/pools', ownerAuth, ah(async (req, res) => {
 
 app.get('/api/owner/espn', ownerAuth, espnSearch);
 
+// Look up a team's two colors by name, for the manual create path.
+app.get('/api/owner/team-colors', ownerAuth, ah(async (req, res) => {
+    const league = req.query.league;
+    const term = String(req.query.team || '').trim();
+    if (!LEAGUES[league] || !term) return res.json({ team: null });
+    try {
+        const teams = await espnTeams(league);
+        const t = matchTeam(teams, term);
+        if (!t) return res.json({ team: null });
+        res.json({ team: { name: t.name, color: t.color || '', color2: t.altColor || t.color || '' } });
+    } catch (e) { res.json({ team: null }); }
+}));
+
 app.post('/api/owner/pools', ownerAuth, ah(async (req, res) => {
     const name = cleanName(req.body.name) || 'Squares Pool';
     const id = await uniquePoolId();
     const adminToken = genToken();
+    const gt = GRID_TYPES[req.body.gridType] || GRID_TYPES.std100;
+    const mode = SLOTS[req.body.numberMode] ? req.body.numberMode : 'once';
+    const topPlaceholder = JSON.stringify(placeholderHeaders(gt.cols));
+    const leftPlaceholder = JSON.stringify(placeholderHeaders(gt.rows));
     await dbRun(
-        `INSERT INTO pools (id, admin_token, name, team_top, team_left, color_top, color_left,
-            cost_per_square, venmo_url, locked, number_mode, top_headers, left_headers)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 'once', ?, ?)`,
+        `INSERT INTO pools (id, admin_token, name, team_top, team_left, color_top, color_left, color_top2, color_left2,
+            cost_per_square, venmo_url, locked, number_mode, grid_cols, grid_rows, top_headers, left_headers)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?)`,
         [
             id, adminToken, name,
             (req.body.teamTop || 'Top').slice(0, 30), (req.body.teamLeft || 'Left').slice(0, 30),
             req.body.colorTop || '#002244', req.body.colorLeft || '#4b92db',
+            req.body.colorTop2 || null, req.body.colorLeft2 || null,
             String(req.body.cost ?? '0'), req.body.venmoUrl || null,
-            DEFAULT_HEADERS, DEFAULT_HEADERS,
+            mode, gt.cols, gt.rows,
+            topPlaceholder, leftPlaceholder,
         ]
     );
     if (req.body.game && LEAGUES[req.body.game.league] && req.body.game.espnId) {
@@ -793,17 +989,85 @@ app.delete('/api/owner/pools/:id', ownerAuth, ah(async (req, res) => {
     res.json({ success: true });
 }));
 
+// After any successful pool mutation, tell connected viewers the board changed
+// so they refetch. Chat routes opt out (they push their own message events).
+app.use('/api/pool', (req, res, next) => {
+    if (req.method !== 'POST') return next();
+    const m = req.path.match(/^\/([^/]+)/);
+    if (!m || req.path.includes('/messages') || req.path.includes('/announcements')) return next();
+    const poolId = m[1];
+    const origJson = res.json.bind(res);
+    res.json = (body) => {
+        if (res.statusCode < 400) { try { bump(poolId); } catch (e) { /* never block the response */ } }
+        return origJson(body);
+    };
+    next();
+});
+
+// --- LIVE STREAM + CHAT ---
+app.get('/api/pool/:id/stream', ah(async (req, res) => {
+    const pool = await dbGet('SELECT id FROM pools WHERE id = ?', [req.params.id]);
+    if (!pool) return res.status(404).end();
+    res.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache, no-transform',
+        Connection: 'keep-alive',
+        'X-Accel-Buffering': 'no',
+    });
+    res.write('retry: 3000\n\n');
+    res.write(': connected\n\n');
+    let set = streams.get(req.params.id);
+    if (!set) { set = new Set(); streams.set(req.params.id, set); }
+    set.add(res);
+    const ping = setInterval(() => { try { res.write(': ping\n\n'); } catch (e) { /* close handler cleans up */ } }, 20000);
+    req.on('close', () => {
+        clearInterval(ping);
+        const s = streams.get(req.params.id);
+        if (s) { s.delete(res); if (s.size === 0) streams.delete(req.params.id); }
+    });
+}));
+
+app.get('/api/pool/:id/messages', ah(async (req, res) => {
+    const pool = await dbGet('SELECT id FROM pools WHERE id = ?', [req.params.id]);
+    if (!pool) return res.status(404).json({ error: 'Pool not found' });
+    const rows = await dbAll('SELECT id, sender, body, is_admin, created_at FROM messages WHERE pool_id = ? ORDER BY id DESC LIMIT 200', [req.params.id]);
+    rows.reverse();
+    res.json({ messages: rows });
+}));
+
+app.post('/api/pool/:id/messages', ah(async (req, res) => {
+    const pool = await dbGet('SELECT id FROM pools WHERE id = ?', [req.params.id]);
+    if (!pool) return res.status(404).json({ error: 'Pool not found' });
+    const sender = (String(req.body.sender || '').trim().slice(0, 40)) || 'Guest';
+    const body = String(req.body.body || '').trim().slice(0, 500);
+    if (!body) return res.status(400).json({ error: 'Message is empty' });
+    const created_at = Date.now();
+    const r = await dbRun('INSERT INTO messages (pool_id, sender, body, is_admin, created_at) VALUES (?, ?, ?, 0, ?)', [req.params.id, sender, body, created_at]);
+    const msg = { id: r.lastID, sender, body, is_admin: 0, created_at };
+    broadcast(req.params.id, 'chat', msg);
+    res.json({ message: msg });
+}));
+
+// Organizer announcements: broadcast notices that pop up once on the player board.
+app.get('/api/pool/:id/announcements', ah(async (req, res) => {
+    const pool = await dbGet('SELECT id FROM pools WHERE id = ?', [req.params.id]);
+    if (!pool) return res.status(404).json({ error: 'Pool not found' });
+    const rows = await dbAll('SELECT id, body, created_at FROM announcements WHERE pool_id = ? ORDER BY id DESC LIMIT 100', [req.params.id]);
+    res.json({ announcements: rows });
+}));
+
 // --- PUBLIC BOARD STATE ---
 app.get('/api/pool/:id', ah(async (req, res) => {
     res.set('Cache-Control', 'no-store');
     const pool = await dbGet('SELECT * FROM pools WHERE id = ?', [req.params.id]);
     if (!pool) return res.status(404).json({ error: 'Pool not found' });
 
-    const squares = await dbAll('SELECT row, col, name, is_paid, claimed_at FROM squares WHERE pool_id = ?', [req.params.id]);
+    const squares = await dbAll('SELECT row, col, name, nickname, is_paid, claimed_at FROM squares WHERE pool_id = ?', [req.params.id]);
     const scoreRows = await dbAll('SELECT period, top_score, left_score FROM scores WHERE pool_id = ?', [req.params.id]);
     const annRows = await dbAll('SELECT row, col, text, icon FROM annotations WHERE pool_id = ?', [req.params.id]);
     const annotations = {};
     annRows.forEach((a) => { annotations[a.row + ',' + a.col] = { text: a.text || '', icon: a.icon || '' }; });
+    const noteRows = await dbAll('SELECT id, body, created_at FROM announcements WHERE pool_id = ? ORDER BY id', [req.params.id]);
 
     const scores = { q1: { top: '', left: '' }, q2: { top: '', left: '' }, q3: { top: '', left: '' }, final: { top: '', left: '' } };
     scoreRows.forEach((r) => { if (scores[r.period]) scores[r.period] = { top: r.top_score || '', left: r.left_score || '' }; });
@@ -816,7 +1080,9 @@ app.get('/api/pool/:id', ah(async (req, res) => {
     gnRows.forEach((gr) => { numberSets[gr.slot] = { top: JSON.parse(gr.top_headers), left: JSON.parse(gr.left_headers) }; });
     const slotsMap = Object.assign({}, numberSets);
     if (!slotsMap.all) slotsMap.all = { top: topHeaders, left: leftHeaders };
-    const winners = computeWinners(squares, scores, mode, slotsMap);
+    const gridCols = pool.grid_cols || 10;
+    const gridRows = pool.grid_rows || 10;
+    const winners = computeWinners(squares, scores, mode, slotsMap, gridCols, gridRows);
     const slotOrder = SLOTS[mode] || SLOTS.once;
     let currentPeriod = null;
     for (const sl of slotOrder) if (slotsMap[sl]) currentPeriod = sl;
@@ -827,19 +1093,21 @@ app.get('/api/pool/:id', ah(async (req, res) => {
     // period numbers); liveWinner is the rolled-over filled square that would win if
     // the period ended now. When the target is filled, the two are the same cell.
     let liveTarget = null, liveWinner = null;
-    if (live && (live.state === 'in' || live.state === 'post') && currentPeriod && slotsMap[currentPeriod]) {
+    // Only highlight the "currently winning" square while the game is in progress.
+    // Once it is final, the gold winner styling takes over and the white outline drops.
+    if (live && live.state === 'in' && currentPeriod && slotsMap[currentPeriod]) {
         const dTop = lastDigit(String(live.top));
         const dLeft = lastDigit(String(live.left));
         const hdr = slotsMap[currentPeriod];
-        const c0 = (dTop === null) ? -1 : hdr.top.indexOf(dTop);
-        const r0 = (dLeft === null) ? -1 : hdr.left.indexOf(dLeft);
+        const c0 = (dTop === null) ? -1 : slotIndexOf(hdr.top, dTop);
+        const r0 = (dLeft === null) ? -1 : slotIndexOf(hdr.left, dLeft);
         if (c0 !== -1 && r0 !== -1) {
             liveTarget = { r: r0, c: c0 };
             let sr = r0, sc = c0;
-            for (let i = 0; i < 100; i++) {
+            for (let i = 0; i < gridCols * gridRows; i++) {
                 const f = squares.find((s) => s.row === sr && s.col === sc);
                 if (f) { liveWinner = { r: sr, c: sc }; break; }
-                sc++; if (sc > 9) { sc = 0; sr++; if (sr > 9) sr = 0; }
+                sc++; if (sc >= gridCols) { sc = 0; sr++; if (sr >= gridRows) sr = 0; }
             }
         }
     }
@@ -849,12 +1117,15 @@ app.get('/api/pool/:id', ah(async (req, res) => {
         name: pool.name,
         squares,
         isLocked: pool.locked === 1,
+        cols: gridCols,
+        rows: gridRows,
         topHeaders,
         leftHeaders,
         winners,
         currentPeriod,
         numberSets,
         annotations,
+        notes: noteRows,
         live,
         liveTarget,
         liveWinner,
@@ -881,14 +1152,16 @@ app.get('/api/pool/:id', ah(async (req, res) => {
 app.post('/api/pool/:id/claim', ah(async (req, res) => {
     const { row, col } = req.body;
     const name = cleanName(req.body.name);
+    const nickname = cleanName(req.body.nickname) || name;
     if (!isDigit(row) || !isDigit(col) || !name) return res.status(400).json({ error: 'Invalid square or name.' });
 
-    const pool = await dbGet('SELECT locked FROM pools WHERE id = ?', [req.params.id]);
+    const pool = await dbGet('SELECT locked, grid_cols, grid_rows FROM pools WHERE id = ?', [req.params.id]);
     if (!pool) return res.status(404).json({ error: 'Pool not found' });
     if (pool.locked === 1) return res.status(403).json({ error: 'Game is locked!' });
+    if (col >= (pool.grid_cols || 10) || row >= (pool.grid_rows || 10)) return res.status(400).json({ error: 'Square out of range.' });
 
     try {
-        await dbRun('INSERT INTO squares (pool_id, row, col, name, claimed_at) VALUES (?, ?, ?, ?, ?)', [req.params.id, row, col, name, new Date().toISOString()]);
+        await dbRun('INSERT INTO squares (pool_id, row, col, name, nickname, claimed_at) VALUES (?, ?, ?, ?, ?, ?)', [req.params.id, row, col, name, nickname, new Date().toISOString()]);
     } catch (e) {
         return res.status(400).json({ error: 'Square taken.' });
     }
@@ -898,15 +1171,18 @@ app.post('/api/pool/:id/claim', ah(async (req, res) => {
 
 app.post('/api/pool/:id/claim-batch', ah(async (req, res) => {
     const name = cleanName(req.body.name);
+    const nickname = cleanName(req.body.nickname) || name;
     const squares = Array.isArray(req.body.squares) ? req.body.squares : [];
     if (!name) return res.status(400).json({ error: 'Name required.' });
     if (!squares.length || !squares.every((s) => isDigit(s.r) && isDigit(s.c))) {
         return res.status(400).json({ error: 'Invalid squares.' });
     }
 
-    const pool = await dbGet('SELECT locked FROM pools WHERE id = ?', [req.params.id]);
+    const pool = await dbGet('SELECT locked, grid_cols, grid_rows FROM pools WHERE id = ?', [req.params.id]);
     if (!pool) return res.status(404).json({ error: 'Pool not found' });
     if (pool.locked === 1) return res.status(403).json({ error: 'Game is locked!' });
+    const gc = pool.grid_cols || 10, gr = pool.grid_rows || 10;
+    if (!squares.every((s) => s.c < gc && s.r < gr)) return res.status(400).json({ error: 'Square out of range.' });
 
     let claimed = 0;
     let errors = 0;
@@ -914,7 +1190,7 @@ app.post('/api/pool/:id/claim-batch', ah(async (req, res) => {
     try {
         for (const sq of squares) {
             try {
-                await dbRun('INSERT INTO squares (pool_id, row, col, name, claimed_at) VALUES (?, ?, ?, ?, ?)', [req.params.id, sq.r, sq.c, name, new Date().toISOString()]);
+                await dbRun('INSERT INTO squares (pool_id, row, col, name, nickname, claimed_at) VALUES (?, ?, ?, ?, ?, ?)', [req.params.id, sq.r, sq.c, name, nickname, new Date().toISOString()]);
                 claimed++;
             } catch (e) {
                 errors++;
@@ -1040,7 +1316,7 @@ app.post('/api/pool/:id/admin/number-mode', poolAdmin, ah(async (req, res) => {
     await dbRun('UPDATE pools SET number_mode = ? WHERE id = ?', [mode, req.params.id]);
     // Changing the rotation resets any drawn numbers.
     await dbRun('DELETE FROM grid_numbers WHERE pool_id = ?', [req.params.id]);
-    await dbRun('UPDATE pools SET top_headers = ?, left_headers = ? WHERE id = ?', [DEFAULT_HEADERS, DEFAULT_HEADERS, req.params.id]);
+    await resetHeaders(req.params.id);
     // If the board is already locked, draw the first slot so it is not left blank.
     const pool = await dbGet('SELECT locked FROM pools WHERE id = ?', [req.params.id]);
     if (pool && pool.locked === 1) await setSlotNumbers(req.params.id, SLOTS[mode][0]);
@@ -1049,14 +1325,15 @@ app.post('/api/pool/:id/admin/number-mode', poolAdmin, ah(async (req, res) => {
 
 app.post('/api/pool/:id/admin/clear-headers', poolAdmin, ah(async (req, res) => {
     await dbRun('DELETE FROM grid_numbers WHERE pool_id = ?', [req.params.id]);
-    await dbRun('UPDATE pools SET top_headers = ?, left_headers = ? WHERE id = ?', [DEFAULT_HEADERS, DEFAULT_HEADERS, req.params.id]);
+    await resetHeaders(req.params.id);
     res.json({ success: true });
 }));
 
 app.post('/api/pool/:id/admin/reset-board', poolAdmin, ah(async (req, res) => {
     await dbRun('DELETE FROM squares WHERE pool_id = ?', [req.params.id]);
     await dbRun('DELETE FROM grid_numbers WHERE pool_id = ?', [req.params.id]);
-    await dbRun('UPDATE pools SET locked = 0, top_headers = ?, left_headers = ? WHERE id = ?', [DEFAULT_HEADERS, DEFAULT_HEADERS, req.params.id]);
+    await dbRun('UPDATE pools SET locked = 0 WHERE id = ?', [req.params.id]);
+    await resetHeaders(req.params.id);
     await logActivity(req.params.id, 'Wiped all squares');
     res.json({ success: true });
 }));
@@ -1106,6 +1383,40 @@ app.get('/api/pool/:id/admin/activity', poolAdmin, ah(async (req, res) => {
     res.json({ activity: rows });
 }));
 
+// Organizer posts into the shared board chat (marked so it stands out).
+app.post('/api/pool/:id/admin/messages', poolAdmin, ah(async (req, res) => {
+    const sender = (String(req.body.sender || '').trim().slice(0, 40)) || 'Organizer';
+    const body = String(req.body.body || '').trim().slice(0, 500);
+    if (!body) return res.status(400).json({ error: 'Message is empty' });
+    const created_at = Date.now();
+    const r = await dbRun('INSERT INTO messages (pool_id, sender, body, is_admin, created_at) VALUES (?, ?, ?, 1, ?)', [req.params.id, sender, body, created_at]);
+    const msg = { id: r.lastID, sender, body, is_admin: 1, created_at };
+    broadcast(req.params.id, 'chat', msg);
+    res.json({ message: msg });
+}));
+
+app.post('/api/pool/:id/admin/messages/:mid/delete', poolAdmin, ah(async (req, res) => {
+    await dbRun('DELETE FROM messages WHERE id = ? AND pool_id = ?', [req.params.mid, req.params.id]);
+    broadcast(req.params.id, 'chat-delete', { id: Number(req.params.mid) });
+    res.json({ success: true });
+}));
+
+app.post('/api/pool/:id/admin/announcements', poolAdmin, ah(async (req, res) => {
+    const body = String(req.body.body || '').trim().slice(0, 500);
+    if (!body) return res.status(400).json({ error: 'Announcement is empty' });
+    const created_at = Date.now();
+    const r = await dbRun('INSERT INTO announcements (pool_id, body, created_at) VALUES (?, ?, ?)', [req.params.id, body, created_at]);
+    const ann = { id: r.lastID, body, created_at };
+    broadcast(req.params.id, 'announce', ann);
+    res.json({ announcement: ann });
+}));
+
+app.post('/api/pool/:id/admin/announcements/:aid/delete', poolAdmin, ah(async (req, res) => {
+    await dbRun('DELETE FROM announcements WHERE id = ? AND pool_id = ?', [req.params.aid, req.params.id]);
+    broadcast(req.params.id, 'announce-delete', { id: Number(req.params.aid) });
+    res.json({ success: true });
+}));
+
 app.post('/api/pool/:id/admin/annotate', poolAdmin, ah(async (req, res) => {
     const { row, col } = req.body;
     if (!isDigit(row) || !isDigit(col)) return res.status(400).json({ error: 'Invalid square.' });
@@ -1136,7 +1447,8 @@ app.post('/api/pool/:id/admin/set-game', poolAdmin, ah(async (req, res) => {
 
 app.post('/api/pool/:id/admin/score-source', poolAdmin, ah(async (req, res) => {
     const source = req.body.source === 'live' ? 'live' : 'manual';
-    await dbRun('UPDATE pools SET score_source = ? WHERE id = ?', [source, req.params.id]);
+    if (source === 'live') await dbRun('UPDATE pools SET score_source = ?, live_done = 0 WHERE id = ?', [source, req.params.id]);
+    else await dbRun('UPDATE pools SET score_source = ? WHERE id = ?', [source, req.params.id]);
     res.json({ success: true });
 }));
 

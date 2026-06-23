@@ -3,7 +3,10 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Admin - Squares</title>
+    <title>Squares Admin</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+    <link rel="apple-touch-icon" href="/icon.png">
+    <meta name="theme-color" content="#121212">
     <style>
         /* --- DARK MODERN THEME --- */
         :root {
@@ -29,12 +32,19 @@
         h1 { margin-bottom: 20px; font-weight: 800; letter-spacing: -0.5px; }
         h3 { margin-top: 0; border-bottom: 1px solid var(--border-color); padding-bottom: 10px; color: #fff; }
 
-        .panel-box { 
-            background: var(--surface-color); padding: 20px; 
-            border-radius: var(--radius-lg); margin: 0 auto 20px auto; 
+        .panel-box {
+            background: var(--surface-color); padding: 20px;
+            border-radius: var(--radius-lg); margin: 0 auto 20px auto;
             max-width: 600px; box-shadow: var(--shadow);
             border: 1px solid var(--border-color); text-align: left;
         }
+        /* Collapsible panels: click the heading to hide a section. */
+        .panel-box > h3 { cursor: pointer; user-select: none; display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+        .panel-box > h3::after { content: '\25BE'; font-size: 0.85rem; color: #888; transition: transform 0.15s; }
+        .panel-box.collapsed { padding-bottom: 16px; }
+        .panel-box.collapsed > h3 { border-bottom: none; padding-bottom: 0; margin-bottom: 0; }
+        .panel-box.collapsed > h3::after { transform: rotate(-90deg); }
+        .panel-box.collapsed > *:not(h3) { display: none; }
 
         input { 
             background: var(--input-bg); border: 1px solid var(--border-color);
@@ -62,7 +72,7 @@
         select { background: var(--input-bg); border: 1px solid var(--border-color); color: white; padding: 8px 10px; border-radius: 8px; font-size: 0.9rem; }
 
         /* Mini grid: mobile management surface */
-        #mini-grid { display: grid; grid-template-columns: repeat(11, 30px); gap: 2px; justify-content: center; margin-top: 15px; }
+        #mini-grid { display: grid; grid-template-columns: repeat(calc(var(--cols, 10) + 1), 30px); gap: 2px; justify-content: center; margin-top: 15px; }
         #mini-grid .cell { width: 30px; height: 30px; background: #2d2d2d; color: #888; font-size: 10px; display: flex; align-items: center; justify-content: center; cursor: pointer; border-radius: 4px; }
         #mini-grid .cell:hover { background: #444; color: white; }
         #mini-grid .cell.taken { background: #2a3c55; color: #fff; border: 1px solid #4a6fa5; }
@@ -84,8 +94,8 @@
         .board-scroll { width: 100%; overflow-x: auto; padding: 5px; box-sizing: border-box; }
         .grid {
             display: grid;
-            grid-template-columns: 34px 40px repeat(10, 54px);
-            grid-template-rows: 34px 40px repeat(10, 48px);
+            grid-template-columns: 34px 40px repeat(var(--cols, 10), 54px);
+            grid-template-rows: 34px 40px repeat(var(--rows, 10), 48px);
             gap: 4px; margin: 0 auto; width: max-content;
         }
         .grid .cell {
@@ -94,8 +104,8 @@
             font-size: 0.78rem; font-weight: 500; position: relative; overflow: hidden;
             box-shadow: 0 1px 2px rgba(0,0,0,0.5); word-break: break-word; padding: 2px; line-height: 1.1;
         }
-        .grid .team-top-bar { grid-column: 3 / span 10; grid-row: 1; border-radius: 12px; color: #fff; font-weight: 800; font-size: 1.1rem; letter-spacing: 1px; text-shadow: 0 2px 4px rgba(0,0,0,0.8); }
-        .grid .team-left-bar { grid-column: 1; grid-row: 3 / span 10; border-radius: 12px; color: #fff; font-weight: 800; font-size: 1.1rem; letter-spacing: 1px; writing-mode: vertical-rl; transform: rotate(180deg); text-shadow: 0 2px 4px rgba(0,0,0,0.8); }
+        .grid .team-top-bar { grid-column: 3 / span var(--cols, 10); grid-row: 1; border-radius: 12px; color: #fff; font-weight: 800; font-size: 1.1rem; letter-spacing: 1px; text-shadow: 0 2px 4px rgba(0,0,0,0.8); }
+        .grid .team-left-bar { grid-column: 1; grid-row: 3 / span var(--rows, 10); border-radius: 12px; color: #fff; font-weight: 800; font-size: 1.1rem; letter-spacing: 1px; writing-mode: vertical-rl; transform: rotate(180deg); text-shadow: 0 2px 4px rgba(0,0,0,0.8); }
         .grid .header-top, .grid .header-left { background: #2d2d2d; color: #fff; font-weight: 800; font-size: 1rem; border: 1px solid #444; }
         .grid .corner-dead { background: transparent; box-shadow: none; }
         .grid .square { cursor: pointer; color: #666; background: #252525; }
@@ -111,6 +121,12 @@
         .grid .square.live-now { outline: 3px solid #fff; outline-offset: -3px; z-index: 13; }
         .grid .square.live-target { outline: 2px dashed #fff; outline-offset: -2px; color: #fff; font-weight: 900; z-index: 12; }
         .grid .ann-icon { position: absolute; bottom: 1px; right: 2px; font-size: 0.6rem; line-height: 1; z-index: 14; pointer-events: none; }
+        /* Earlier-quarter tally outside the grid (mirrors the player board). */
+        .grid.has-tally { grid-template-columns: 34px auto 40px repeat(var(--cols, 10), 54px); grid-template-rows: 34px auto 40px repeat(var(--rows, 10), 48px); }
+        .grid .tally-top, .grid .tally-left { background: transparent; box-shadow: none; overflow: visible; display: flex; gap: 2px; padding: 0 1px; flex-wrap: nowrap; }
+        .grid .tally-top { align-items: flex-end; justify-content: center; }
+        .grid .tally-left { flex-direction: column; align-items: flex-end; justify-content: center; }
+        .grid .tnum { font-size: 0.5rem; font-weight: 800; line-height: 1.25; background: #232323; border: 1px solid #3a3a3a; border-radius: 2px; padding: 0 2px; white-space: nowrap; }
 
         table.stats { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 0.9rem; }
         table.stats th { text-align: left; color: #888; padding: 8px; border-bottom: 1px solid #444; }
@@ -134,6 +150,26 @@
         }
         .row { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
         .label { min-width: 80px; font-weight: bold; color: #aaa; }
+
+        /* Admin chat */
+        #admin-chat-log { height: 280px; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; padding: 4px 2px; margin-bottom: 12px; }
+        .acm { font-size: 0.88rem; line-height: 1.4; position: relative; }
+        .acm .who { font-weight: 700; color: #4aa8ff; font-size: 0.78rem; }
+        .acm.admin .who { color: #fbbf24; }
+        .acm .badge { font-size: 0.62rem; color: #121212; background: #fbbf24; border-radius: 4px; padding: 0 4px; margin-left: 5px; font-weight: 800; }
+        .acm .when { color: #666; font-size: 0.66rem; margin-left: 6px; font-weight: 400; }
+        .acm .txt { color: #e3e3e3; word-break: break-word; white-space: pre-wrap; }
+        .acm .del { background: none; border: none; color: #ff6b6b; cursor: pointer; font-size: 0.72rem; padding: 0; margin: 0 0 0 6px; }
+        .chat-empty { color: #777; font-size: 0.85rem; text-align: center; padding: 20px 0; }
+
+        /* Announcements list */
+        .ann-row { padding: 8px 0; border-bottom: 1px solid #333; display: flex; gap: 8px; align-items: flex-start; }
+        .ann-row:last-child { border-bottom: none; }
+        .ann-row .body { flex: 1; min-width: 0; }
+        .ann-row .when { color: #888; font-size: 0.68rem; margin-bottom: 2px; }
+        .ann-row .txt { color: #e3e3e3; white-space: pre-wrap; word-break: break-word; font-size: 0.88rem; }
+        .ann-row .del { background: none; border: none; color: #ff6b6b; cursor: pointer; font-size: 0.72rem; padding: 4px 0 0; margin: 0; flex-shrink: 0; }
+        .ann-empty { color: #777; font-size: 0.85rem; padding: 8px 0; }
     </style>
 </head>
 <body>
@@ -181,11 +217,6 @@
                 <span class="label">Game start:</span>
                 <input type="datetime-local" id="start-input" style="flex:1; min-width:0;">
                 <button class="primary" onclick="saveStart()">Set</button>
-            </div>
-            <div class="row" style="align-items:flex-start;">
-                <span class="label">Note:</span>
-                <textarea id="note-input" rows="2" placeholder="Message shown to players (how to pay, prizes, house rules)" style="flex:1; min-width:0; resize:vertical; background:var(--input-bg); border:1px solid var(--border-color); color:#fff; padding:8px 12px; border-radius:8px; font-size:0.9rem; margin:5px;"></textarea>
-                <button class="primary" onclick="saveNote()">Set</button>
             </div>
             <div id="team-section">
                 <div class="row">
@@ -292,7 +323,7 @@
         <div class="panel-box">
             <h3>6. Square Log</h3>
             <details>
-                <summary style="cursor:pointer; color:#008CFF; font-weight:600;">Show all 100 squares</summary>
+                <summary style="cursor:pointer; color:#008CFF; font-weight:600;">Show all squares</summary>
                 <div id="square-log" style="margin-top:12px;"></div>
             </details>
         </div>
@@ -304,7 +335,26 @@
                 <div id="activity-log" style="margin-top:12px;"></div>
             </details>
         </div>
-        
+
+        <div class="panel-box">
+            <h3>8. Board Chat</h3>
+            <div id="admin-chat-log"><div class="chat-empty">Loading...</div></div>
+            <form class="row" style="margin-bottom:0;" onsubmit="return sendAdminChat(event)">
+                <input id="admin-chat-input" placeholder="Message players as the organizer..." maxlength="500" autocomplete="off" style="flex:1; min-width:0;">
+                <button type="submit" class="primary">Send</button>
+            </form>
+        </div>
+
+        <div class="panel-box">
+            <h3>9. Notes</h3>
+            <p style="font-size:0.82rem; color:#888; margin:0 0 10px;">Notes stick to the top of the player board (how to pay, prizes, house rules). Add as many as you want.</p>
+            <form onsubmit="return sendAnnouncement(event)">
+                <textarea id="announce-input" rows="2" placeholder="e.g. Pay by kickoff Sunday, prizes are $25 each quarter" maxlength="500" style="width:100%; box-sizing:border-box; resize:vertical; background:var(--input-bg); border:1px solid var(--border-color); color:#fff; padding:8px 12px; border-radius:8px; font-size:0.9rem; margin:0 0 8px;"></textarea>
+                <div style="text-align:right;"><button type="submit" class="primary">Add note</button></div>
+            </form>
+            <div id="announce-list" style="margin-top:10px;"></div>
+        </div>
+
             <br>
             <a id="back-link" href="/" style="color:#008CFF; text-decoration:none;">← Back to Public Board</a>
           </div>
@@ -345,11 +395,28 @@
             if (res.ok) {
                 document.getElementById('login-screen').style.display = 'none';
                 document.getElementById('admin-ui').style.display = 'block';
+                setupCollapsibles();
                 loadAdmin();
+                startAdminLive();
             } else {
                 document.getElementById('login-screen').style.display = 'block';
                 document.getElementById('admin-ui').style.display = 'none';
             }
+        }
+
+        // Make each admin panel collapse when its heading is clicked, remembering the state.
+        function setupCollapsibles() {
+            document.querySelectorAll('#admin-ui .panel-box').forEach((box) => {
+                const h = box.querySelector('h3');
+                if (!h || h.dataset.collapsible) return;
+                h.dataset.collapsible = '1';
+                const key = 'adminCollapse:' + poolId + ':' + (h.textContent || '').trim();
+                if (localStorage.getItem(key) === '1') box.classList.add('collapsed');
+                h.addEventListener('click', () => {
+                    box.classList.toggle('collapsed');
+                    localStorage.setItem(key, box.classList.contains('collapsed') ? '1' : '0');
+                });
+            });
         }
 
         function submitToken() {
@@ -379,7 +446,6 @@
                 document.getElementById('color-top2').value = data.colorTop2 || data.colorTop;
                 document.getElementById('color-left2').value = data.colorLeft2 || data.colorLeft;
                 document.getElementById('title-input').value = data.name || '';
-                document.getElementById('note-input').value = data.note || '';
                 document.getElementById('cost-input').value = data.cost;
                 document.getElementById('deadline-input').value = data.paymentDeadline || '';
                 const si = document.getElementById('start-input');
@@ -431,7 +497,7 @@
             annCell = { r, c };
             const cur = ((lastAdminData && lastAdminData.annotations) || {})[r + ',' + c] || { icon: '', text: '' };
             annIcon = cur.icon || '';
-            document.getElementById('ann-title').innerText = 'Annotate cell #' + (r * 10 + c + 1);
+            document.getElementById('ann-title').innerText = 'Annotate cell #' + (r * ((lastAdminData && lastAdminData.cols) || 10) + c + 1);
             document.getElementById('ann-text').value = cur.text || '';
             renderAnnIcons();
             document.getElementById('annotate-modal').style.display = 'flex';
@@ -450,17 +516,19 @@
 
         function renderGrid(data) {
             const grid = document.getElementById('mini-grid');
-            grid.innerHTML = ''; 
+            grid.innerHTML = '';
+            const cols = data.cols || 10, rows = data.rows || 10;
+            grid.style.setProperty('--cols', cols);
             addCell(grid, '', 'header');
-            data.topHeaders.forEach(h => addCell(grid, h, 'header'));
-            for(let r=0; r<10; r++) {
-                addCell(grid, data.leftHeaders[r], 'header'); 
-                for(let c=0; c<10; c++) {
+            for (let c = 0; c < cols; c++) addCell(grid, fmtHdr(data.topHeaders[c]), 'header');
+            for(let r=0; r<rows; r++) {
+                addCell(grid, fmtHdr(data.leftHeaders[r]), 'header');
+                for(let c=0; c<cols; c++) {
                     const taken = data.squares.find(s=>s.row===r && s.col===c);
                     const div = document.createElement('div');
                     if(taken) {
                         div.className = 'cell taken' + (taken.is_paid === 1 ? ' paid' : '');
-                        div.innerText = taken.name.substring(0,2);
+                        div.innerText = (taken.nickname || taken.name).substring(0,2);
                         div.title = taken.name;
                     } else {
                         div.className = 'cell';
@@ -471,29 +539,46 @@
             }
         }
 
+        function periodChip(slot, val) {
+            return `<span class="tnum" style="color:${PERIOD_COLORS[slot] || '#fff'}" title="${PERIOD_BADGE[slot] || slot}">${fmtHdr(val)}</span>`;
+        }
         function renderFullBoard(data) {
             const grid = document.getElementById('full-grid');
             if (!grid) return;
             grid.innerHTML = '';
+            const cols = data.cols || 10, rows = data.rows || 10;
+            grid.style.setProperty('--cols', cols);
+            grid.style.setProperty('--rows', rows);
             const mk = (cls, txt, styles = {}) => {
                 const d = document.createElement('div');
                 d.className = cls; d.innerText = txt;
                 for (const s in styles) d.style[s] = styles[s];
                 return d;
             };
-            const grad = (c1, c2) => `linear-gradient(135deg, ${c1 || '#333'}, ${c2 || c1 || '#333'})`;
-            grid.appendChild(mk('cell team-top-bar', data.teamTop, { backgroundImage: grad(data.colorTop, data.colorTop2) }));
-            grid.appendChild(mk('cell team-left-bar', data.teamLeft, { backgroundImage: grad(data.colorLeft, data.colorLeft2) }));
-            grid.appendChild(mk('cell corner-dead', '', { gridRow: '1', gridColumn: '1' }));
-            grid.appendChild(mk('cell corner-dead', '', { gridRow: '1', gridColumn: '2' }));
-            grid.appendChild(mk('cell corner-dead', '', { gridRow: '2', gridColumn: '1' }));
-            grid.appendChild(mk('cell corner-dead', '', { gridRow: '2', gridColumn: '2' }));
 
             const sets = drawnSets(data);
             const multi = data.numberMode !== 'once' && sets.length > 0;
-            for (let c = 0; c < 10; c++) {
-                if (multi) grid.appendChild(multiHeader('header-top', sets, 'top', c));
-                else grid.appendChild(mk('cell header-top', data.topHeaders[c]));
+            const current = data.currentPeriod;
+            const past = multi ? sets.filter(([slot]) => slot !== current) : [];
+            // Current quarter sits in the header cell; earlier quarters tally outside the grid.
+            const tally = multi && past.length >= 1;
+            const base = tally ? 3 : 2;
+            grid.classList.toggle('has-tally', tally);
+            const curColor = (multi && current) ? (PERIOD_COLORS[current] || '#fff') : '';
+
+            const grad = (c1, c2) => `linear-gradient(135deg, ${c1 || '#333'}, ${c2 || c1 || '#333'})`;
+            grid.appendChild(mk('cell team-top-bar', data.teamTop, { backgroundImage: grad(data.colorTop, data.colorTop2), gridRow: '1', gridColumn: `${base + 1} / span ${cols}` }));
+            grid.appendChild(mk('cell team-left-bar', data.teamLeft, { backgroundImage: grad(data.colorLeft, data.colorLeft2), gridColumn: '1', gridRow: `${base + 1} / span ${rows}` }));
+
+            for (let c = 0; c < cols; c++) {
+                const h = mk('cell header-top', fmtHdr(data.topHeaders[c]), { gridRow: String(base), gridColumn: String(base + 1 + c) });
+                if (curColor) h.style.color = curColor;
+                grid.appendChild(h);
+                if (tally) {
+                    const t = mk('cell tally-top', '', { gridRow: '2', gridColumn: String(base + 1 + c) });
+                    t.innerHTML = past.map(([slot, hdr]) => periodChip(slot, hdr.top[c])).join('');
+                    grid.appendChild(t);
+                }
             }
 
             const winners = data.winners || {};
@@ -503,10 +588,16 @@
                 if (w && w.winner) { const k = w.winner.r + ',' + w.winner.c; (winMap[k] = winMap[k] || []).push(q); }
             });
 
-            for (let r = 0; r < 10; r++) {
-                if (multi) grid.appendChild(multiHeader('header-left', sets, 'left', r));
-                else grid.appendChild(mk('cell header-left', data.leftHeaders[r]));
-                for (let c = 0; c < 10; c++) {
+            for (let r = 0; r < rows; r++) {
+                const hl = mk('cell header-left', fmtHdr(data.leftHeaders[r]), { gridColumn: String(base), gridRow: String(base + 1 + r) });
+                if (curColor) hl.style.color = curColor;
+                grid.appendChild(hl);
+                if (tally) {
+                    const t = mk('cell tally-left', '', { gridColumn: '2', gridRow: String(base + 1 + r) });
+                    t.innerHTML = past.map(([slot, hdr]) => periodChip(slot, hdr.left[r])).join('');
+                    grid.appendChild(t);
+                }
+                for (let c = 0; c < cols; c++) {
                     const taken = data.squares.find(s => s.row === r && s.col === c);
                     let cls = taken ? ('cell square taken' + (taken.is_paid === 1 ? ' paid' : '')) : 'cell square';
                     let isWinner = false, isPhantom = false;
@@ -520,9 +611,9 @@
                     const isLiveTarget = data.liveTarget && data.liveTarget.r === r && data.liveTarget.c === c && !isLiveWin;
                     if (isLiveWin) cls += ' live-now';
                     else if (isLiveTarget) cls += ' live-target';
-                    let txt = taken ? taken.name : ((isPhantom && !multi) ? 'SCORE' : '');
+                    let txt = taken ? (taken.nickname || taken.name) : ((isPhantom && !multi) ? 'SCORE' : '');
                     if (isLiveTarget && !taken) txt = '↪';
-                    const div = mk(cls, txt);
+                    const div = mk(cls, txt, { gridRow: String(base + 1 + r), gridColumn: String(base + 1 + c) });
                     if (multi && isWinner) {
                         const badges = document.createElement('div');
                         badges.className = 'pwin-badges';
@@ -567,7 +658,8 @@
                 </tr>`;
             });
             const totalMoney = totalSq * cost;
-            html += `<tr><td><strong>TOTAL</strong></td><td><strong>${totalSq}/100</strong></td><td><strong>$${totalMoney}</strong></td><td></td><td></td></tr></table>`;
+            const boardTotal = (lastAdminData ? (lastAdminData.cols || 10) * (lastAdminData.rows || 10) : 100);
+            html += `<tr><td><strong>TOTAL</strong></td><td><strong>${totalSq}/${boardTotal}</strong></td><td><strong>$${totalMoney}</strong></td><td></td><td></td></tr></table>`;
             document.getElementById('stats-container').innerHTML = html;
             
             const qPay = (totalMoney / 4).toFixed(2);
@@ -583,16 +675,19 @@
 
         function renderLog(data) {
             const rows = [];
-            for (let r = 0; r < 10; r++) {
-                for (let c = 0; c < 10; c++) {
-                    const cellId = r * 10 + c + 1;
+            const cols = data.cols || 10, gridRows = data.rows || 10;
+            for (let r = 0; r < gridRows; r++) {
+                for (let c = 0; c < cols; c++) {
+                    const cellId = r * cols + c + 1;
                     const sq = data.squares.find(s => s.row === r && s.col === c);
                     const top = data.topHeaders[c], left = data.leftHeaders[r];
-                    const nums = (typeof top === 'number' && typeof left === 'number') ? `${top}/${left}` : '-';
+                    const drawn = (top !== '?' && top !== undefined && left !== '?' && left !== undefined);
+                    const nums = drawn ? `${fmtHdr(top)}/${fmtHdr(left)}` : '-';
                     if (sq) {
                         const when = sq.claimed_at ? new Date(sq.claimed_at).toLocaleString() : '-';
                         const paid = sq.is_paid === 1 ? '✅' : '❌';
-                        rows.push(`<tr><td>#${cellId}</td><td>${nums}</td><td>${escapeHtml(sq.name)}</td><td>${when}</td><td>${paid}</td><td><button class="red" onclick="clearCell(${r},${c})">✕</button></td></tr>`);
+                        const nick = (sq.nickname && sq.nickname !== sq.name) ? ` <span style="color:#888;">(${escapeHtml(sq.nickname)})</span>` : '';
+                        rows.push(`<tr><td>#${cellId}</td><td>${nums}</td><td>${escapeHtml(sq.name)}${nick}</td><td>${when}</td><td>${paid}</td><td><button class="red" onclick="clearCell(${r},${c})">✕</button></td></tr>`);
                     } else {
                         rows.push(`<tr class="empty"><td>#${cellId}</td><td>${nums}</td><td colspan="3">unclaimed</td><td></td></tr>`);
                     }
@@ -619,15 +714,18 @@
         async function openSquareAdmin(r, c) {
             const data = lastAdminData;
             if (!data) return;
-            const cellId = r * 10 + c + 1;
+            const cellId = r * (data.cols || 10) + c + 1;
             const sq = data.squares.find(s => s.row === r && s.col === c);
             const top = data.topHeaders[c], left = data.leftHeaders[r];
-            const nums = (typeof top === 'number' && typeof left === 'number') ? `${top} / ${left}` : 'not drawn';
+            const drawn = (top !== '?' && top !== undefined && left !== '?' && left !== undefined);
+            const nums = drawn ? `${fmtHdr(top)} / ${fmtHdr(left)}` : 'not drawn';
             let body, buttons;
             if (sq) {
                 const when = sq.claimed_at ? new Date(sq.claimed_at).toLocaleString() : 'Unknown';
                 const paid = sq.is_paid === 1 ? 'Paid ✅' : 'Unpaid ❌';
+                const nickLine = (sq.nickname && sq.nickname !== sq.name) ? `<div><span class="k">On board as:</span> ${escapeHtml(sq.nickname)}</div>` : '';
                 body = `<div><span class="k">Owner:</span> ${escapeHtml(sq.name)}</div>
+                        ${nickLine}
                         <div><span class="k">Claimed:</span> ${when}</div>
                         <div><span class="k">Numbers:</span> ${nums}</div>
                         <div><span class="k">Payment:</span> ${paid}</div>`;
@@ -685,10 +783,6 @@
             const v = document.getElementById('start-input').value;
             await apiCall('settings', { startTime: v ? new Date(v).toISOString() : '' });
             uiToast('Start time saved');
-        }
-        async function saveNote() {
-            await apiCall('settings', { note: document.getElementById('note-input').value });
-            uiToast('Note saved');
         }
         function toLocalInput(d) {
             const pad = n => (n < 10 ? '0' : '') + n;
@@ -776,10 +870,14 @@
             const ns = data.numberSets || {};
             return order.filter(s => ns[s]).map(s => [s, ns[s]]);
         }
+        function fmtHdr(h) {
+            if (Array.isArray(h)) return h.slice().sort((a, b) => a - b).join(' ');
+            return (h === null || h === undefined) ? '?' : h;
+        }
         function multiHeader(cls, sets, axis, i) {
             const d = document.createElement('div');
             d.className = 'cell ' + cls + ' multi';
-            d.innerHTML = sets.map(([slot, hdr]) => `<span class="pnum" style="color:${PERIOD_COLORS[slot] || '#fff'}">${hdr[axis][i]}</span>`).join('');
+            d.innerHTML = sets.map(([slot, hdr]) => `<span class="pnum" style="color:${PERIOD_COLORS[slot] || '#fff'}">${fmtHdr(hdr[axis][i])}</span>`).join('');
             return d;
         }
 
@@ -854,10 +952,11 @@
         async function toggleLock(l) {
             if (l) {
                 const filled = lastAdminData ? lastAdminData.squares.length : 0;
-                const msg = filled < 100
-                    ? `Only ${filled}/100 squares are claimed. Lock the board and draw the numbers now? This cannot be undone.`
+                const total = lastAdminData ? (lastAdminData.cols || 10) * (lastAdminData.rows || 10) : 100;
+                const msg = filled < total
+                    ? `Only ${filled}/${total} squares are claimed. Lock the board and draw the numbers now? This cannot be undone.`
                     : 'Lock the board and draw the numbers? This cannot be undone.';
-                if (!(await uiConfirm(msg, { okText: 'Lock & draw', danger: filled < 100 }))) return;
+                if (!(await uiConfirm(msg, { okText: 'Lock & draw', danger: filled < total }))) return;
             }
             await apiCall('lock', { locked: l });
         }
@@ -865,7 +964,137 @@
         async function resetHeaders() { if(await uiConfirm("Reset the numbers back to '?'", {okText:'Reset'})) await apiCall('clear-headers', {}); }
         async function resetBoard() { if(await uiConfirm('Wipe ALL names from this board? This cannot be undone.', {danger:true, okText:'Wipe all'})) await apiCall('reset-board', {}); }
 
-        setInterval(() => { if (adminUnlocked) loadAdmin(false); }, 5000);
+        // --- BOARD CHAT + LIVE STREAM ---
+        let adminStreamStarted = false, adminChatLoaded = false;
+        const adminChatSeen = new Set();
+        function aEsc(s) { const d = document.createElement('div'); d.innerText = s == null ? '' : s; return d.innerHTML; }
+        function aFmtTime(ts) {
+            const n = Number(ts); if (!n) return '';
+            try { return new Date(n).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); } catch (e) { return ''; }
+        }
+        function adminMsgHtml(m) {
+            const badge = m.is_admin ? '<span class="badge">ORGANIZER</span>' : '';
+            return `<div class="acm${m.is_admin ? ' admin' : ''}" data-id="${m.id}">`
+                + `<span class="who">${aEsc(m.sender || 'Guest')}${badge}<span class="when">${aFmtTime(m.created_at)}</span>`
+                + `<button class="del" title="Delete" onclick="deleteAdminMsg(${m.id})">delete</button></span>`
+                + `<div class="txt">${aEsc(m.body)}</div></div>`;
+        }
+        function adminChatBottom() {
+            const log = document.getElementById('admin-chat-log');
+            return log.scrollHeight - log.scrollTop - log.clientHeight < 40;
+        }
+        function appendAdminMsg(m, fromHistory) {
+            if (adminChatSeen.has(m.id)) return;
+            adminChatSeen.add(m.id);
+            const log = document.getElementById('admin-chat-log');
+            const empty = log.querySelector('.chat-empty');
+            if (empty) empty.remove();
+            const stick = adminChatBottom();
+            log.insertAdjacentHTML('beforeend', adminMsgHtml(m));
+            if (stick || fromHistory) log.scrollTop = log.scrollHeight;
+        }
+        function removeAdminMsg(id) {
+            const el = document.querySelector(`#admin-chat-log .acm[data-id="${id}"]`);
+            if (el) el.remove();
+        }
+        async function loadAdminChat() {
+            try {
+                const r = await fetch(`/api/pool/${poolId}/messages`);
+                const data = await r.json();
+                const log = document.getElementById('admin-chat-log');
+                log.innerHTML = '';
+                adminChatSeen.clear();
+                if (!data.messages || !data.messages.length) {
+                    log.innerHTML = '<div class="chat-empty">No messages yet.</div>';
+                } else {
+                    data.messages.forEach((m) => appendAdminMsg(m, true));
+                }
+                adminChatLoaded = true;
+            } catch (e) { /* leave placeholder */ }
+        }
+        async function sendAdminChat(e) {
+            e.preventDefault();
+            const input = document.getElementById('admin-chat-input');
+            const body = input.value.trim();
+            if (!body) return false;
+            input.value = '';
+            try {
+                await fetch(`/api/pool/${poolId}/admin/messages`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-Admin-Token': adminToken },
+                    body: JSON.stringify({ sender: 'Organizer', body }),
+                });
+            } catch (err) { input.value = body; }
+            return false;
+        }
+        async function deleteAdminMsg(id) {
+            if (!(await uiConfirm('Delete this message?', { danger: true, okText: 'Delete' }))) return;
+            try {
+                await fetch(`/api/pool/${poolId}/admin/messages/${id}/delete`, {
+                    method: 'POST', headers: { 'X-Admin-Token': adminToken },
+                });
+                removeAdminMsg(id);
+            } catch (e) { uiAlert('Could not delete the message.'); }
+        }
+        function startAdminLive() {
+            if (!adminChatLoaded) loadAdminChat();
+            loadAnnouncements();
+            if (adminStreamStarted || !window.EventSource) return;
+            adminStreamStarted = true;
+            const es = new EventSource(`/api/pool/${poolId}/stream`);
+            es.addEventListener('board', () => { if (adminUnlocked) loadAdmin(false); });
+            es.addEventListener('chat', (ev) => { try { appendAdminMsg(JSON.parse(ev.data)); } catch (e) {} });
+            es.addEventListener('chat-delete', (ev) => { try { removeAdminMsg(JSON.parse(ev.data).id); } catch (e) {} });
+            es.addEventListener('announce', () => loadAnnouncements());
+            es.addEventListener('announce-delete', () => loadAnnouncements());
+        }
+
+        // --- ANNOUNCEMENTS ---
+        async function loadAnnouncements() {
+            try {
+                const r = await fetch(`/api/pool/${poolId}/announcements`);
+                const data = await r.json();
+                renderAnnouncements(data.announcements || []);
+            } catch (e) { /* leave as-is */ }
+        }
+        function renderAnnouncements(list) {
+            const box = document.getElementById('announce-list');
+            if (!list.length) { box.innerHTML = '<div class="ann-empty">No notes yet.</div>'; return; }
+            box.innerHTML = list.map((a) =>
+                `<div class="ann-row"><div class="body"><div class="when">${aFmtTime(a.created_at)}</div><div class="txt">${aEsc(a.body)}</div></div>`
+                + `<button class="del" title="Delete" onclick="deleteAnnouncement(${a.id})">delete</button></div>`
+            ).join('');
+        }
+        async function sendAnnouncement(e) {
+            e.preventDefault();
+            const input = document.getElementById('announce-input');
+            const body = input.value.trim();
+            if (!body) return false;
+            try {
+                const r = await fetch(`/api/pool/${poolId}/admin/announcements`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-Admin-Token': adminToken },
+                    body: JSON.stringify({ body }),
+                });
+                if (!r.ok) throw new Error();
+                input.value = '';
+                loadAnnouncements();
+                uiToast('Note added to the board.');
+            } catch (err) { uiAlert('Could not add the note.'); }
+            return false;
+        }
+        async function deleteAnnouncement(id) {
+            if (!(await uiConfirm('Delete this note? It will be removed from the board too.', { danger: true, okText: 'Delete' }))) return;
+            try {
+                await fetch(`/api/pool/${poolId}/admin/announcements/${id}/delete`, {
+                    method: 'POST', headers: { 'X-Admin-Token': adminToken },
+                });
+                loadAnnouncements();
+            } catch (e) { uiAlert('Could not delete the note.'); }
+        }
+
+        // SSE drives instant refreshes; this slow poll is a safety net if the stream drops.
+        setInterval(() => { if (adminUnlocked) loadAdmin(false); }, 30000);
 
     </script>
 </body>

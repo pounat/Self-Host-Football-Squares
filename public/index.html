@@ -3,7 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Super Bowl Squares</title>
+    <title>Squares</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+    <link rel="apple-touch-icon" href="/icon.png">
+    <meta name="theme-color" content="#121212">
+    <!--OG-->
     <style>
         /* --- DARK MODE THEME --- */
         :root {
@@ -56,6 +60,14 @@
             background: #333; color: #fff; padding: 5px 12px;
             border-radius: 12px; font-size: 0.9rem; display: inline-block; margin-bottom: 15px;
         }
+        .payout-card {
+            background: #1c1c1c; border: 1px solid #383838; border-radius: 12px;
+            padding: 10px 16px; margin: 0 auto 14px; max-width: 360px;
+            flex-direction: column; gap: 4px; align-items: center;
+        }
+        .payout-card .pc-cost { color: #fff; font-weight: 700; font-size: 0.95rem; }
+        .payout-card .pc-periods { display: flex; flex-wrap: wrap; justify-content: center; gap: 7px; font-weight: 800; font-size: 0.95rem; }
+        .payout-card .pc-each { color: #aaa; font-size: 0.82rem; }
 
         .grid-container {
             max-width: 100%; margin: 0 auto; padding: 5px;
@@ -70,18 +82,28 @@
         }
         .toolbar-btn:hover { background: #333; }
         .top-tools { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; margin-bottom: 12px; }
-        .note-card { display: none; background: #2a2a22; border: 1px solid #5a5a2a; border-left: 4px solid #fbbf24; border-radius: 10px; padding: 12px 16px; margin: 0 auto 14px; max-width: 450px; text-align: left; color: #eee; font-size: 0.9rem; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
+        /* The fit-to-screen toggle is only useful on a narrow screen. */
+        @media (min-width: 601px) { #fit-btn { display: none; } }
+        #notes-wrap { display: flex; flex-direction: column; align-items: center; gap: 10px; margin-bottom: 4px; }
+        .note-card { background: #2a2a22; border: 1px solid #5a5a2a; border-left: 4px solid #fbbf24; border-radius: 10px; padding: 12px 16px; margin: 0 auto; max-width: 450px; width: 100%; box-sizing: border-box; text-align: left; color: #eee; font-size: 0.9rem; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
 
         .grid {
             display: grid;
-            grid-template-columns: 50px 50px repeat(10, 70px);
-            grid-template-rows: 50px 50px repeat(10, 60px);
+            grid-template-columns: 50px 50px repeat(var(--cols, 10), 70px);
+            grid-template-rows: 50px 50px repeat(var(--rows, 10), 60px);
             gap: var(--gap-size); width: max-content; margin: 0 auto;
         }
+        /* When earlier quarters tally outside the grid, add an auto-sized track on each axis. */
+        .grid.has-tally { grid-template-columns: 50px auto 50px repeat(var(--cols, 10), 70px); grid-template-rows: 50px auto 50px repeat(var(--rows, 10), 60px); }
         @media (max-width: 600px) {
-            .grid { grid-template-columns: 35px 40px repeat(10, 60px); grid-template-rows: 40px 40px repeat(10, 50px); }
+            .grid { grid-template-columns: 35px 40px repeat(var(--cols, 10), 60px); grid-template-rows: 40px 40px repeat(var(--rows, 10), 50px); }
+            .grid.has-tally { grid-template-columns: 35px auto 40px repeat(var(--cols, 10), 60px); grid-template-rows: 40px auto 40px repeat(var(--rows, 10), 50px); }
             body { padding: 10px 5px 80px 5px; } h1 { font-size: 1.5rem; } :root { --header-offset: 45px; }
         }
+        .tally-top, .tally-left { background: transparent; box-shadow: none; overflow: visible; display: flex; gap: 2px; padding: 0 1px; flex-wrap: nowrap; }
+        .tally-top { align-items: flex-end; justify-content: center; }
+        .tally-left { flex-direction: column; align-items: flex-end; justify-content: center; }
+        .tnum { font-size: 0.5rem; font-weight: 800; line-height: 1.25; background: #232323; border: 1px solid #3a3a3a; border-radius: 2px; padding: 0 2px; white-space: nowrap; }
 
         .cell { 
             background: var(--surface-color); border-radius: var(--radius-sm);
@@ -91,14 +113,14 @@
             word-break: break-word; padding: 2px; line-height: 1.1;
         }
 
-        .team-top-bar { 
-            grid-column: 3 / span 10; grid-row: 1; border-radius: var(--radius-lg);
+        .team-top-bar {
+            grid-column: 3 / span var(--cols, 10); grid-row: 1; border-radius: var(--radius-lg);
             color: white; font-weight: 800; font-size: 1.5rem; letter-spacing: 1px;
             position: sticky; top: 0; z-index: 20; box-shadow: 0 4px 8px rgba(0,0,0,0.6);
             text-shadow: 0 2px 4px rgba(0,0,0,0.8);
         }
-        .team-left-bar { 
-            grid-column: 1; grid-row: 3 / span 10; border-radius: var(--radius-lg);
+        .team-left-bar {
+            grid-column: 1; grid-row: 3 / span var(--rows, 10); border-radius: var(--radius-lg);
             color: white; font-weight: 800; font-size: 1.5rem; letter-spacing: 1px;
             position: sticky; left: 0; z-index: 20; writing-mode: vertical-rl; transform: rotate(180deg); 
             box-shadow: 0 4px 8px rgba(0,0,0,0.6); text-shadow: 0 2px 4px rgba(0,0,0,0.8);
@@ -206,6 +228,45 @@
             animation: popUp 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
         }
         @keyframes popUp { from { transform: translate(-50%, 100%); } to { transform: translate(-50%, 0); } }
+
+        /* LIVE CHAT */
+        #chat-fab {
+            position: fixed; bottom: 20px; right: 16px; z-index: 1500;
+            width: 54px; height: 54px; border-radius: 50%;
+            background: #008CFF; color: #fff; border: none; cursor: pointer;
+            font-size: 1.4rem; box-shadow: 0 6px 15px rgba(0,0,0,0.5);
+            display: flex; align-items: center; justify-content: center;
+        }
+        #chat-unread {
+            position: absolute; top: -3px; right: -3px;
+            background: #ff6b6b; color: #fff; font-size: 0.68rem; font-weight: 800;
+            min-width: 18px; height: 18px; border-radius: 9px; padding: 0 4px;
+            display: none; align-items: center; justify-content: center; box-sizing: border-box;
+        }
+        #chat-panel {
+            position: fixed; bottom: 84px; right: 16px; z-index: 1600;
+            width: 340px; max-width: calc(100vw - 24px); height: 60vh; max-height: 460px;
+            background: var(--surface-color); border: 1px solid #444; border-radius: var(--radius-lg);
+            box-shadow: 0 10px 30px rgba(0,0,0,0.6);
+            display: none; flex-direction: column; overflow: hidden; text-align: left;
+        }
+        #chat-panel.open { display: flex; }
+        .chat-head { padding: 12px 14px; border-bottom: 1px solid #444; display: flex; align-items: center; justify-content: space-between; }
+        .chat-head .ct { font-weight: 800; color: #fff; }
+        .chat-head .cx { background: none; border: none; color: #888; font-size: 1.4rem; cursor: pointer; line-height: 1; padding: 0 4px; }
+        #chat-log { flex: 1; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 10px; }
+        .chat-msg { font-size: 0.88rem; line-height: 1.4; }
+        .chat-msg .who { font-weight: 700; color: #4aa8ff; font-size: 0.78rem; }
+        .chat-msg.mine .who { color: #4ade80; }
+        .chat-msg.admin .who { color: #fbbf24; }
+        .chat-msg .badge { font-size: 0.62rem; color: #121212; background: #fbbf24; border-radius: 4px; padding: 0 4px; margin-left: 5px; font-weight: 800; }
+        .chat-msg .when { color: #666; font-size: 0.66rem; margin-left: 6px; font-weight: 400; }
+        .chat-msg .txt { color: #e3e3e3; word-break: break-word; white-space: pre-wrap; }
+        .chat-empty { color: #777; font-size: 0.85rem; text-align: center; margin: auto 0; }
+        .chat-form { display: flex; gap: 8px; padding: 10px; border-top: 1px solid #444; }
+        .chat-form input { flex: 1; min-width: 0; background: #2d2d2d; border: 1px solid #444; color: #fff; padding: 9px 11px; border-radius: 20px; font-size: 0.9rem; }
+        .chat-form input:focus { outline: 2px solid #008CFF; border-color: transparent; }
+        .chat-form button { background: #008CFF; color: #fff; border: none; border-radius: 50%; width: 38px; height: 38px; cursor: pointer; font-size: 1rem; flex-shrink: 0; }
     </style>
 </head>
 <body>
@@ -214,14 +275,16 @@
 
     <div class="top-tools">
         <button class="toolbar-btn" onclick="openRules()">📋 Rules &amp; Payouts</button>
-        <button class="toolbar-btn" onclick="openPick()">🎲 Pick for me</button>
+        <button id="pick-btn" class="toolbar-btn" onclick="openPick()">🎲 Pick for me</button>
         <button class="toolbar-btn" onclick="copyShareLink(this)">🔗 Share</button>
         <button id="fit-btn" class="toolbar-btn" onclick="toggleFit()">⤢ Fit to screen</button>
     </div>
 
-    <div id="note-card" class="note-card"></div>
+    <div id="notes-wrap"></div>
 
     <div class="counter-pill"><span id="counter">Loading...</span></div>
+
+    <div id="payout-card" class="payout-card" style="display:none;"></div>
 
     <div id="name-line" style="font-size:0.85rem; color:#aaa; margin-bottom:10px;"></div>
     <div id="period-note" style="font-size:0.85rem; color:#fbbf24; margin-bottom:8px;"></div>
@@ -251,8 +314,17 @@
             <div class="modal-title" id="wel-title">Welcome</div>
             <div class="modal-body" id="wel-rules"></div>
             <div style="margin-top:16px;">
-                <label style="font-size:0.85rem; color:#aaa;">Your name (shows on squares you claim)</label>
-                <input id="wel-name" class="wel-input" placeholder="e.g. Nathan" onkeyup="if(event.key==='Enter') continueWelcome()">
+                <label style="font-size:0.85rem; color:#aaa;">Your name <span style="color:#ff6b6b;">*</span></label>
+                <div style="display:flex; gap:8px;">
+                    <input id="wel-first" class="wel-input" placeholder="First name" style="flex:1; min-width:0;" onkeyup="if(event.key==='Enter') continueWelcome()">
+                    <input id="wel-last" class="wel-input" placeholder="Last name or initial" style="flex:1; min-width:0;" onkeyup="if(event.key==='Enter') continueWelcome()">
+                </div>
+                <div style="font-size:0.74rem; color:#777; margin-top:3px;">Only the organizer uses this to know who you are.</div>
+            </div>
+            <div style="margin-top:12px;">
+                <label style="font-size:0.85rem; color:#aaa;">Nickname</label>
+                <input id="wel-nick" class="wel-input" placeholder="e.g. NateDog" onkeyup="if(event.key==='Enter') continueWelcome()">
+                <div style="font-size:0.74rem; color:#777; margin-top:3px;">Optional. This is what shows on the board and in chat.</div>
                 <div id="wel-err" style="color:#ff6b6b; font-size:0.8rem; min-height:1em; margin-top:4px;"></div>
             </div>
             <button class="modal-close" onclick="continueWelcome()">Continue →</button>
@@ -302,6 +374,19 @@
         </div>
     </div>
 
+    <button id="chat-fab" onclick="toggleChat()" title="Board chat">💬<span id="chat-unread">0</span></button>
+    <div id="chat-panel">
+        <div class="chat-head">
+            <span class="ct">Board chat</span>
+            <button class="cx" onclick="toggleChat()" aria-label="Close">×</button>
+        </div>
+        <div id="chat-log"><div class="chat-empty">Loading...</div></div>
+        <form class="chat-form" onsubmit="return sendChat(event)">
+            <input id="chat-input" placeholder="Message the board..." maxlength="500" autocomplete="off">
+            <button type="submit" title="Send">➤</button>
+        </form>
+    </div>
+
     <script>
         let isLocked = false;
         let selectedSquares = [];
@@ -310,9 +395,17 @@
         if (!poolId) { location.href = '/'; }
 
         const NAME_KEY = 'playerName';
+        const FIRST_KEY = 'playerFirst';
+        const LAST_KEY = 'playerLast';
+        const NICK_KEY = 'playerNick';
         const seenKey = 'welcomeSeen:' + poolId;
         const getName = () => localStorage.getItem(NAME_KEY) || '';
         const setName = (n) => localStorage.setItem(NAME_KEY, n);
+        // The nickname is the public display name (board + chat). If none was set,
+        // fall back to the first word of the real name.
+        const firstNameOf = (n) => (n || '').trim().split(/\s+/)[0] || '';
+        const getNick = () => localStorage.getItem(NICK_KEY) || firstNameOf(getName());
+        const setNick = (n) => { if (n) localStorage.setItem(NICK_KEY, n); else localStorage.removeItem(NICK_KEY); };
         let lastData = null;
         let welcomeHandled = false;
 
@@ -324,6 +417,7 @@
             }
             const data = await res.json();
             isLocked = data.isLocked;
+            document.getElementById('pick-btn').style.display = isLocked ? 'none' : '';
 
             document.getElementById('title').innerText = data.name || 'Squares';
             document.title = data.name || 'Squares';
@@ -351,8 +445,16 @@
 
             document.getElementById('price-display').innerText = "$" + data.cost;
             document.getElementById('payout-display').innerText = "$" + quarterPayout;
-            
-            const remaining = 100 - takenCount;
+
+            const payPeriods = [['Q1', 'q1'], ['Q2', 'q2'], ['Q3', 'q3'], ['Final', 'final']];
+            const pc = document.getElementById('payout-card');
+            pc.style.display = 'flex';
+            pc.innerHTML =
+                `<div class="pc-cost">$${data.cost} per square</div>` +
+                `<div class="pc-periods">${payPeriods.map(([lbl, sl]) => `<span style="color:${PERIOD_COLORS[sl]}">${lbl}</span>`).join('<span style="color:#555">&middot;</span>')}</div>` +
+                `<div class="pc-each">$${quarterPayout} to each winner so far</div>`;
+
+            const remaining = ((data.cols || 10) * (data.rows || 10)) - takenCount;
             const countEl = document.getElementById('counter');
             countEl.innerText = remaining + " Squares Left";
             countEl.style.color = remaining < 10 ? "#ff6b6b" : "#fff";
@@ -387,31 +489,50 @@
             const ns = data.numberSets || {};
             return order.filter(s => ns[s]).map(s => [s, ns[s]]);
         }
+        function fmtHdr(h) {
+            if (Array.isArray(h)) return h.slice().sort((a, b) => a - b).join(' ');
+            return (h === null || h === undefined) ? '?' : h;
+        }
         function makeMultiHeader(cls, sets, axis, i) {
             const d = document.createElement('div');
             d.className = 'cell ' + cls + ' multi';
-            d.innerHTML = sets.map(([slot, hdr]) => `<span class="pnum" style="color:${PERIOD_COLORS[slot] || '#fff'}">${hdr[axis][i]}</span>`).join('');
+            d.innerHTML = sets.map(([slot, hdr]) => `<span class="pnum" style="color:${PERIOD_COLORS[slot] || '#fff'}">${fmtHdr(hdr[axis][i])}</span>`).join('');
             return d;
         }
 
+        function periodChip(slot, val) {
+            return `<span class="tnum" style="color:${PERIOD_COLORS[slot] || '#fff'}" title="${PERIOD_FULL[slot] || slot}">${fmtHdr(val)}</span>`;
+        }
         function renderGrid(data, winnersInfo) {
             const grid = document.getElementById('grid');
             grid.innerHTML = '';
+            const cols = data.cols || 10, rows = data.rows || 10;
+            grid.style.setProperty('--cols', cols);
+            grid.style.setProperty('--rows', rows);
+
+            const sets = drawnSets(data);                       // chronological [[slot, {top,left}], ...]
+            const multi = data.numberMode !== 'once' && sets.length > 0;
+            const current = data.currentPeriod;
+            const past = multi ? sets.filter(([slot]) => slot !== current) : [];
+            // The current quarter sits in the header cell; earlier quarters tally outside the grid.
+            const tally = multi && past.length >= 1;
+            const base = tally ? 3 : 2;                          // fixed header tracks before the data
+            grid.classList.toggle('has-tally', tally);
+            const curColor = (multi && current) ? (PERIOD_COLORS[current] || '#fff') : '';
 
             const grad = (c1, c2) => `linear-gradient(135deg, ${c1 || '#333'}, ${c2 || c1 || '#333'})`;
-            grid.appendChild(createDiv('cell team-top-bar', data.teamTop, {backgroundImage: grad(data.colorTop, data.colorTop2)}));
-            grid.appendChild(createDiv('cell team-left-bar', data.teamLeft, {backgroundImage: grad(data.colorLeft, data.colorLeft2)}));
-            grid.appendChild(createDiv('cell corner-dead', '', {gridRow:'1', gridColumn:'1'}));
-            grid.appendChild(createDiv('cell corner-dead', '', {gridRow:'1', gridColumn:'2'}));
-            grid.appendChild(createDiv('cell corner-dead', '', {gridRow:'2', gridColumn:'1'}));
-            grid.appendChild(createDiv('cell corner-dead', '', {gridRow:'2', gridColumn:'2'}));
+            grid.appendChild(createDiv('cell team-top-bar', data.teamTop, { backgroundImage: grad(data.colorTop, data.colorTop2), gridRow: '1', gridColumn: `${base + 1} / span ${cols}` }));
+            grid.appendChild(createDiv('cell team-left-bar', data.teamLeft, { backgroundImage: grad(data.colorLeft, data.colorLeft2), gridColumn: '1', gridRow: `${base + 1} / span ${rows}` }));
 
-            const sets = drawnSets(data);
-            const multi = data.numberMode !== 'once' && sets.length > 0;
-
-            for(let c=0; c<10; c++){
-                if(multi) grid.appendChild(makeMultiHeader('header-top', sets, 'top', c));
-                else grid.appendChild(createDiv('cell header-top', data.topHeaders[c]));
+            for (let c = 0; c < cols; c++) {
+                const h = createDiv('cell header-top', fmtHdr(data.topHeaders[c]), { gridRow: String(base), gridColumn: String(base + 1 + c) });
+                if (curColor) h.style.color = curColor;
+                grid.appendChild(h);
+                if (tally) {
+                    const t = createDiv('cell tally-top', '', { gridRow: '2', gridColumn: String(base + 1 + c) });
+                    t.innerHTML = past.map(([slot, hdr]) => periodChip(slot, hdr.top[c])).join('');
+                    grid.appendChild(t);
+                }
             }
 
             // square "r,c" -> which payout periods it won
@@ -421,10 +542,16 @@
                 if(w && w.winner) { const k = w.winner.r + ',' + w.winner.c; (winMap[k] = winMap[k] || []).push(q); }
             });
 
-            for(let r=0; r<10; r++){
-                if(multi) grid.appendChild(makeMultiHeader('header-left', sets, 'left', r));
-                else grid.appendChild(createDiv('cell header-left', data.leftHeaders[r]));
-                for(let c=0; c<10; c++){
+            for(let r=0; r<rows; r++){
+                const hl = createDiv('cell header-left', fmtHdr(data.leftHeaders[r]), { gridColumn: String(base), gridRow: String(base + 1 + r) });
+                if (curColor) hl.style.color = curColor;
+                grid.appendChild(hl);
+                if (tally) {
+                    const t = createDiv('cell tally-left', '', { gridColumn: '2', gridRow: String(base + 1 + r) });
+                    t.innerHTML = past.map(([slot, hdr]) => periodChip(slot, hdr.left[r])).join('');
+                    grid.appendChild(t);
+                }
+                for(let c=0; c<cols; c++){
                     const taken = data.squares.find(s=>s.row===r && s.col===c);
                     let cls = taken ? ('cell square taken' + (taken.is_paid === 1 ? ' paid' : '')) : 'cell square';
 
@@ -447,10 +574,10 @@
                     if(isLiveWin) cls += ' live-now';
                     else if(isLiveTarget) cls += ' live-target';
 
-                    let txt = taken ? taken.name : ((isPhantom && !multi) ? 'SCORE' : '');
+                    let txt = taken ? (taken.nickname || taken.name) : ((isPhantom && !multi) ? 'SCORE' : '');
                     if(isLiveTarget && !taken) txt = '↪';
 
-                    const div = createDiv(cls, txt);
+                    const div = createDiv(cls, txt, { gridRow: String(base + 1 + r), gridColumn: String(base + 1 + c) });
                     if(multi && isWinner) {
                         const badges = document.createElement('div');
                         badges.className = 'pwin-badges';
@@ -512,7 +639,7 @@
                 pay = `<div style="margin-top:14px; font-size:0.9rem; color:#ddd;">Hand <strong>$${total}</strong> cash to the admin.</div>`;
             }
             document.getElementById('sm-body').innerHTML =
-                `<div>Claiming as <strong>${escapeHtml(getName())}</strong>, total <strong>$${total}</strong> <span style="color:#888;">($${cost} × ${count})</span>.</div>${pay}
+                `<div>Claiming as <strong>${escapeHtml(getNick())}</strong>, total <strong>$${total}</strong> <span style="color:#888;">($${cost} × ${count})</span>.</div>${pay}
                  <div style="margin-top:12px; font-size:0.8rem; color:#fbbf24;">${payDeadlineMsg()}</div>`;
             document.getElementById('sm-actions').innerHTML =
                 `<button class="modal-close" onclick="confirmSubmit()">Confirm &amp; Claim</button>
@@ -525,7 +652,7 @@
             const res = await fetch(`/api/pool/${poolId}/claim-batch`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ squares: selectedSquares, name: getName() })
+                body: JSON.stringify({ squares: selectedSquares, name: getName(), nickname: getNick() })
             });
             const d = await res.json();
             const claimed = (d.claimed != null) ? d.claimed : count;
@@ -580,24 +707,28 @@
         function showSquareInfo(r, c, sq, data) {
             const top = (data.topHeaders || [])[c];
             const left = (data.leftHeaders || [])[r];
-            const numbers = (typeof top === 'number' && typeof left === 'number')
-                ? `${data.teamTop || 'Top'} ${top} &bull; ${data.teamLeft || 'Left'} ${left}`
+            const drawn = (top !== '?' && top !== undefined && left !== '?' && left !== undefined);
+            const numbers = drawn
+                ? `${data.teamTop || 'Top'} ${fmtHdr(top)} &bull; ${data.teamLeft || 'Left'} ${fmtHdr(left)}`
                 : 'Not drawn yet';
             let claimed = 'Unknown';
             if (sq.claimed_at) { const d = new Date(sq.claimed_at); if (!isNaN(d)) claimed = d.toLocaleString(); }
             const paid = sq.is_paid === 1 ? 'Paid ✅' : 'Unpaid ❌';
-            const cellId = r * 10 + c + 1;
+            const cellId = r * (data.cols || 10) + c + 1;
             const ann = (data.annotations || {})[r + ',' + c];
             const annLine = (ann && (ann.icon || ann.text)) ? `<div><span class="k">Note:</span> ${ann.icon || ''} ${escapeHtml(ann.text || '')}</div>` : '';
 
-            document.getElementById('sq-title').innerText = sq.name;
+            const nick = sq.nickname || sq.name;
+            document.getElementById('sq-title').innerText = nick;
+            const realLine = (sq.name && sq.name !== nick) ? `<div><span class="k">Name:</span> ${escapeHtml(sq.name)}</div>` : '';
             document.getElementById('sq-body').innerHTML = `
+                ${realLine}
                 <div><span class="k">Cell:</span> #${cellId}</div>
                 <div><span class="k">Claimed:</span> ${claimed}</div>
                 <div><span class="k">Numbers:</span> ${numbers}</div>
                 <div><span class="k">Payment:</span> ${paid}</div>
                 ${annLine}
-                <div style="margin-top:10px; color:#888; font-size:0.82rem;">To remove this square, ask the admin to clear cell #${cellId}.</div>
+                ${isLocked ? '' : `<div style="margin-top:10px; color:#888; font-size:0.82rem;">To remove this square, ask the admin to clear cell #${cellId}.</div>`}
             `;
             document.getElementById('sq-modal').classList.add('open');
         }
@@ -653,7 +784,7 @@
         function updateNameLine() {
             const el = document.getElementById('name-line');
             const n = getName();
-            if (n) el.innerHTML = `Claiming as <strong>${escapeHtml(n)}</strong> · <a href="#" onclick="openWelcome();return false;" style="color:#008CFF;">change</a>`;
+            if (n) el.innerHTML = `Claiming as <strong>${escapeHtml(getNick())}</strong> · <a href="#" onclick="openWelcome();return false;" style="color:#008CFF;">change</a>`;
             else el.innerHTML = `<a href="#" onclick="openWelcome();return false;" style="color:#008CFF;">Set your name to claim →</a>`;
         }
         function openWelcome() {
@@ -672,15 +803,26 @@
                 <div><span class="k">Win:</span> Q1, Q2, Q3, and the final score of the game (last digit of each team's score).</div>
                 <div><span class="k">Numbers:</span> ${rotation}</div>
                 <div><span class="k">Rollover:</span> an empty winning square goes to the next filled square reading right.</div>
-                <div><span class="k">To play:</span> tap squares, then Claim, and your name fills in automatically.</div>
+                <div><span class="k">To play:</span> tap squares, then Claim, and your details fill in automatically.</div>
             `;
-            document.getElementById('wel-name').value = getName();
+            // Repopulate first/last from storage (split a legacy single name if needed).
+            let first = localStorage.getItem(FIRST_KEY) || '';
+            let last = localStorage.getItem(LAST_KEY) || '';
+            if (!first && !last && getName()) { const parts = getName().trim().split(/\s+/); first = parts[0] || ''; last = parts.slice(1).join(' '); }
+            document.getElementById('wel-first').value = first;
+            document.getElementById('wel-last').value = last;
+            document.getElementById('wel-nick').value = localStorage.getItem(NICK_KEY) || '';
             document.getElementById('wel-err').innerText = '';
         }
         function continueWelcome() {
-            const n = document.getElementById('wel-name').value.trim();
-            if (!n) { document.getElementById('wel-err').innerText = 'Please enter a name (or tap "Just looking").'; return; }
-            setName(n);
+            const first = document.getElementById('wel-first').value.trim();
+            const last = document.getElementById('wel-last').value.trim();
+            if (!first || !last) { document.getElementById('wel-err').innerText = 'First name and last name (or initial) are both required.'; return; }
+            const nick = document.getElementById('wel-nick').value.trim();
+            localStorage.setItem(FIRST_KEY, first);
+            localStorage.setItem(LAST_KEY, last);
+            setName(first + ' ' + last);
+            setNick(nick);
             localStorage.setItem(seenKey, '1');
             document.getElementById('welcome').classList.remove('open');
             updateNameLine();
@@ -707,7 +849,8 @@
             const taken = new Set(((lastData && lastData.squares) || []).map(s => s.row + ',' + s.col));
             const sel = new Set(selectedSquares.map(s => s.r + ',' + s.c));
             const free = [];
-            for (let r = 0; r < 10; r++) for (let c = 0; c < 10; c++) { const k = r + ',' + c; if (!taken.has(k) && !sel.has(k)) free.push({ r, c }); }
+            const pCols = (lastData && lastData.cols) || 10, pRows = (lastData && lastData.rows) || 10;
+            for (let r = 0; r < pRows; r++) for (let c = 0; c < pCols; c++) { const k = r + ',' + c; if (!taken.has(k) && !sel.has(k)) free.push({ r, c }); }
             if (!free.length) { errEl.innerText = 'No squares left.'; return; }
             for (let i = free.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); const t = free[i]; free[i] = free[j]; free[j] = t; }
             const n = Math.min(want, free.length);
@@ -716,16 +859,40 @@
             updateUI();
         }
         function updateNote(data) {
-            const el = document.getElementById('note-card');
-            if (!el) return;
-            if (data.note) { el.style.display = 'block'; el.textContent = data.note; }
-            else { el.style.display = 'none'; }
+            const wrap = document.getElementById('notes-wrap');
+            if (!wrap) return;
+            const notes = data.notes || [];
+            wrap.innerHTML = notes.map((n) => `<div class="note-card">${escapeHtml(n.body)}</div>`).join('');
+        }
+        function copyToClipboard(text) {
+            // navigator.clipboard only exists in secure contexts (https / localhost), so fall
+            // back to a hidden textarea + execCommand on plain-http hostnames like laptop:3000.
+            if (navigator.clipboard && window.isSecureContext) {
+                return navigator.clipboard.writeText(text).then(() => true).catch(() => fallbackCopy(text));
+            }
+            return Promise.resolve(fallbackCopy(text));
+        }
+        function fallbackCopy(text) {
+            try {
+                const ta = document.createElement('textarea');
+                ta.value = text;
+                ta.style.position = 'fixed';
+                ta.style.top = '-9999px';
+                document.body.appendChild(ta);
+                ta.focus();
+                ta.select();
+                const ok = document.execCommand('copy');
+                document.body.removeChild(ta);
+                return ok;
+            } catch (e) { return false; }
         }
         function copyShareLink(btn) {
-            navigator.clipboard.writeText(location.href.split('#')[0]);
-            const old = btn.innerHTML;
-            btn.innerHTML = 'Copied ✓';
-            setTimeout(() => { btn.innerHTML = old; }, 1400);
+            const link = location.href.split('#')[0];
+            copyToClipboard(link).then((ok) => {
+                const old = btn.innerHTML;
+                btn.innerHTML = ok ? 'Copied ✓' : link;
+                setTimeout(() => { btn.innerHTML = old; }, ok ? 1400 : 4000);
+            });
         }
 
         function createDiv(cls, txt, styles={}) {
@@ -754,7 +921,7 @@
                 container.style.height = '';
                 container.style.overflow = '';
             }
-            if (btn) btn.innerText = fitMode ? '⤢ Actual size' : '⤢ Fit to screen';
+            if (btn) btn.innerText = fitMode ? '⤢ Bigger' : '⤢ Fit to screen';
         }
         function toggleFit() {
             fitMode = !fitMode;
@@ -763,7 +930,109 @@
         }
         window.addEventListener('resize', applyFit);
 
-        setInterval(load, 5000);
+        // --- LIVE CHAT + STREAM ---
+        let chatOpen = false, chatLoaded = false, chatUnread = 0;
+        const chatSeen = new Set();
+        function esc(s) { const d = document.createElement('div'); d.innerText = s == null ? '' : s; return d.innerHTML; }
+        function fmtTime(ts) {
+            const n = Number(ts); if (!n) return '';
+            try { return new Date(n).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); } catch (e) { return ''; }
+        }
+        function chatRowHtml(m) {
+            const mine = !m.is_admin && m.sender && m.sender === getNick();
+            const cls = 'chat-msg' + (m.is_admin ? ' admin' : (mine ? ' mine' : ''));
+            const badge = m.is_admin ? '<span class="badge">ORGANIZER</span>' : '';
+            return `<div class="${cls}" data-id="${m.id}"><span class="who">${esc(m.sender || 'Guest')}${badge}<span class="when">${fmtTime(m.created_at)}</span></span><div class="txt">${esc(m.body)}</div></div>`;
+        }
+        function chatAtBottom() {
+            const log = document.getElementById('chat-log');
+            return log.scrollHeight - log.scrollTop - log.clientHeight < 40;
+        }
+        function appendMessage(m, fromHistory) {
+            if (chatSeen.has(m.id)) return;
+            chatSeen.add(m.id);
+            const log = document.getElementById('chat-log');
+            const empty = log.querySelector('.chat-empty');
+            if (empty) empty.remove();
+            const stick = chatAtBottom();
+            log.insertAdjacentHTML('beforeend', chatRowHtml(m));
+            if (stick || fromHistory) log.scrollTop = log.scrollHeight;
+            if (!fromHistory && !chatOpen) { chatUnread++; renderUnread(); }
+        }
+        function removeMessage(id) {
+            const el = document.querySelector(`#chat-log .chat-msg[data-id="${id}"]`);
+            if (el) el.remove();
+        }
+        function renderUnread() {
+            const b = document.getElementById('chat-unread');
+            b.innerText = chatUnread > 9 ? '9+' : chatUnread;
+            b.style.display = chatUnread > 0 ? 'flex' : 'none';
+        }
+        async function loadChat() {
+            try {
+                const r = await fetch(`/api/pool/${poolId}/messages`);
+                const data = await r.json();
+                const log = document.getElementById('chat-log');
+                log.innerHTML = '';
+                chatSeen.clear();
+                if (!data.messages || !data.messages.length) {
+                    log.innerHTML = '<div class="chat-empty">No messages yet. Say hi!</div>';
+                } else {
+                    data.messages.forEach((m) => appendMessage(m, true));
+                }
+                chatLoaded = true;
+            } catch (e) { /* leave the placeholder */ }
+        }
+        function toggleChat() {
+            chatOpen = !chatOpen;
+            document.getElementById('chat-panel').classList.toggle('open', chatOpen);
+            if (chatOpen) {
+                chatUnread = 0; renderUnread();
+                if (!chatLoaded) loadChat();
+                // Only auto-focus on mouse devices, so a phone keyboard does not spring open.
+                const isMouse = window.matchMedia && window.matchMedia('(hover: hover) and (pointer: fine)').matches;
+                if (isMouse) setTimeout(() => { const i = document.getElementById('chat-input'); if (i) i.focus(); }, 50);
+                const log = document.getElementById('chat-log');
+                setTimeout(() => { log.scrollTop = log.scrollHeight; }, 60);
+            }
+        }
+        async function sendChat(e) {
+            e.preventDefault();
+            const input = document.getElementById('chat-input');
+            const body = input.value.trim();
+            if (!body) return false;
+            const sender = getNick() || 'Guest';
+            input.value = '';
+            try {
+                await fetch(`/api/pool/${poolId}/messages`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ sender, body }),
+                });
+            } catch (err) { input.value = body; }
+            return false;
+        }
+
+        let reloadTimer = null;
+        function scheduleReload() {
+            if (reloadTimer) return;
+            reloadTimer = setTimeout(() => { reloadTimer = null; load(); }, 250);
+        }
+        function connectStream() {
+            if (!window.EventSource) return;
+            const es = new EventSource(`/api/pool/${poolId}/stream`);
+            es.addEventListener('board', scheduleReload);
+            es.addEventListener('chat', (ev) => { try { appendMessage(JSON.parse(ev.data)); } catch (e) {} });
+            es.addEventListener('chat-delete', (ev) => { try { removeMessage(JSON.parse(ev.data).id); } catch (e) {} });
+            // Notes ride along with the board fetch, so a change just triggers a reload.
+            es.addEventListener('announce', scheduleReload);
+            es.addEventListener('announce-delete', scheduleReload);
+            // EventSource auto-reconnects on error, so no manual retry is needed.
+        }
+
+        connectStream();
+        // SSE pushes updates live; this slow poll is just a safety net if the stream drops.
+        setInterval(load, 30000);
         setInterval(updateCountdown, 1000);
         load();
     </script>

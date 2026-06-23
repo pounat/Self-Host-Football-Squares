@@ -1,15 +1,14 @@
 {
   "name": "squares",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "description": "Self-hosted football and basketball squares pool",
+  "main": "server.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
     "start": "node server.js"
   },
   "keywords": [],
-  "author": "",
-  "license": "ISC",
+  "author": "Barnabas",
+  "license": "GPL-3.0-or-later",
   "type": "commonjs",
   "dependencies": {
     "body-parser": "^2.2.2",
