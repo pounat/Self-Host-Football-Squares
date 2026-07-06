@@ -247,6 +247,15 @@
             { key: 'per_quarter', title: 'Re-draw each quarter', desc: 'Fresh numbers for Q1, Q2, Q3 and the final.' },
             { key: 'per_half', title: 'Re-draw at halftime', desc: 'One set for the first half, another for the second.' },
         ];
+        const NUM_OPTS_GM = [
+            { key: 'once', title: 'Static numbers', desc: 'One shuffle drawn at lock, kept all match.' },
+            { key: 'per_goal', title: 'Re-shuffle after each goal', desc: 'Each goal locks in behind a fresh draw.' },
+        ];
+        const FORMAT_OPTS = [
+            { key: 'digits', title: 'Classic squares', desc: "Winners from the last digit of each team's score. Football, basketball, etc." },
+            { key: 'goal_minute', title: 'Soccer — goal minute ⚽', desc: 'Every goal pays the square for the minute it was scored; a 0-0 pays the final-whistle minute.' },
+        ];
+        const SOCCER_LEAGUE_OPTS = '<option value="wc">World Cup ⚽</option><option value="wwc">Women\'s World Cup ⚽</option><option value="ucl">Champions League ⚽</option><option value="epl">Premier League ⚽</option><option value="mls">MLS ⚽</option>';
 
         function fmtLocal(iso) {
             if (!iso) return '';
@@ -260,7 +269,7 @@
                 i: 0, name: '', source: null, game: null, gameLabel: '',
                 teamTop: 'Top', teamLeft: 'Left',
                 colorTop: '#002244', colorTop2: '#1c5fb0', colorLeft: '#7a0000', colorLeft2: '#e23b3b',
-                numberMode: 'once', gridType: 'std100', cost: '5', venmo: '',
+                numberMode: 'once', gridType: 'std100', scoring: 'digits', cost: '5', venmo: '',
             };
             document.getElementById('wiz').style.display = 'flex';
             wizRender();
@@ -271,7 +280,7 @@
             const s = ['name', 'source'];
             if (wiz.source === 'auto') s.push('game');
             else if (wiz.source === 'manual') s.push('teams');
-            s.push('numbers', 'grid', 'price');
+            s.push('format', 'numbers', 'grid', 'price');
             return s;
         }
 
@@ -294,6 +303,7 @@
                     <select id="wz-league">
                         <option value="nfl">NFL</option><option value="ncaaf">College Football</option>
                         <option value="nba">NBA</option><option value="wnba">WNBA</option><option value="ncaab">College Basketball</option>
+                        ${SOCCER_LEAGUE_OPTS}
                     </select>
                     <div style="display:flex; gap:8px; margin-top:8px; align-items:center;"><input type="text" id="wz-team" placeholder="Team name (optional)" style="flex:1 1 auto; min-width:0; width:auto;"><input type="date" id="wz-date" style="flex:0 0 auto; width:auto;"></div>
                     <div style="text-align:right; margin-top:8px;"><button class="ghost small" onclick="wizFindGames()">Find games</button></div>
@@ -309,6 +319,7 @@
                     <select id="wz-clg">
                         <option value="nfl">NFL</option><option value="ncaaf">College Football</option>
                         <option value="nba">NBA</option><option value="wnba">WNBA</option><option value="ncaab">College Basketball</option>
+                        ${SOCCER_LEAGUE_OPTS}
                     </select>
                     <label>Top team (columns)</label>
                     <div style="display:flex; gap:8px; align-items:center;"><input type="text" id="wz-tt" value="${escapeHtml(wiz.teamTop)}" style="flex:1 1 auto; min-width:0; width:auto;"><button class="ghost small" type="button" onclick="wizFindColors('top')">Find colors</button></div>
@@ -324,9 +335,14 @@
                     wiz.colorLeft = document.getElementById('wz-cl').value; wiz.colorLeft2 = document.getElementById('wz-cl2').value;
                 },
             },
+            format: {
+                title: 'Game type',
+                render: () => FORMAT_OPTS.map(o => `<div class="wiz-choice ${wiz.scoring===o.key?'sel':''}" onclick="wizPickFormat('${o.key}')"><div class="ct">${o.title}</div><div class="cd">${o.desc}</div></div>`).join(''),
+                save: () => {},
+            },
             numbers: {
                 title: 'Numbers',
-                render: () => NUM_OPTS.map(o => `<div class="wiz-choice ${wiz.numberMode===o.key?'sel':''}" onclick="wizPick('numberMode','${o.key}')"><div class="ct">${o.title}</div><div class="cd">${o.desc}</div></div>`).join(''),
+                render: () => (wiz.scoring === 'goal_minute' ? NUM_OPTS_GM : NUM_OPTS).map(o => `<div class="wiz-choice ${wiz.numberMode===o.key?'sel':''}" onclick="wizPick('numberMode','${o.key}')"><div class="ct">${o.title}</div><div class="cd">${o.desc}</div></div>`).join(''),
                 save: () => {},
             },
             grid: {
@@ -345,6 +361,13 @@
 
         function wizPickSource(s) { wiz.source = s; wizRender(); }
         function wizPick(field, val) { wiz[field] = val; wizRender(); }
+        function wizPickFormat(val) {
+            wiz.scoring = val;
+            // Keep the number mode valid for the chosen format.
+            const valid = val === 'goal_minute' ? ['once', 'per_goal'] : ['once', 'per_quarter', 'per_half'];
+            if (!valid.includes(wiz.numberMode)) wiz.numberMode = 'once';
+            wizRender();
+        }
 
         function colorPair(id, val) {
             return `<span class="wiz-cpair"><input type="color" class="color-picker" id="wz-${id}" value="${val}" oninput="wizHexFromPicker('${id}')"><input type="text" class="wiz-hex" id="wz-${id}-hex" value="${val}" maxlength="7" placeholder="#000000" style="width:84px; flex:0 0 auto;" oninput="wizPickerFromHex('${id}')"></span>`;
@@ -437,7 +460,7 @@
         async function wizCreate() {
             const body = {
                 name: wiz.name, cost: wiz.cost, venmoUrl: wiz.venmo,
-                numberMode: wiz.numberMode, gridType: wiz.gridType,
+                numberMode: wiz.numberMode, gridType: wiz.gridType, scoring: wiz.scoring,
             };
             if (wiz.source === 'auto' && wiz.game) body.game = wiz.game;
             if (wiz.source === 'manual') {

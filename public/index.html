@@ -69,6 +69,15 @@
         .payout-card .pc-periods { display: flex; flex-wrap: wrap; justify-content: center; gap: 7px; font-weight: 800; font-size: 0.95rem; }
         .payout-card .pc-each { color: #aaa; font-size: 0.82rem; }
 
+        .gm-rules {
+            background: #12261a; border: 1px solid #1f5133; border-radius: 12px;
+            padding: 12px 16px; margin: 0 auto 14px; max-width: 420px; text-align: left;
+        }
+        .gm-rules h4 { margin: 0 0 6px; color: #4ade80; font-size: 0.95rem; }
+        .gm-rules ul { margin: 0; padding-left: 18px; }
+        .gm-rules li { color: #cfe9d8; font-size: 0.82rem; margin: 3px 0; }
+        .gm-rules li strong { color: #fff; }
+
         .grid-container {
             max-width: 100%; margin: 0 auto; padding: 5px;
             overflow-x: auto; overflow-y: visible;
@@ -122,9 +131,15 @@
         .team-left-bar {
             grid-column: 1; grid-row: 3 / span var(--rows, 10); border-radius: var(--radius-lg);
             color: white; font-weight: 800; font-size: 1.5rem; letter-spacing: 1px;
-            position: sticky; left: 0; z-index: 20; writing-mode: vertical-rl; transform: rotate(180deg); 
+            position: sticky; left: 0; z-index: 20; writing-mode: vertical-rl; transform: rotate(180deg);
             box-shadow: 0 4px 8px rgba(0,0,0,0.6); text-shadow: 0 2px 4px rgba(0,0,0,0.8);
         }
+        @keyframes numPop { 0% { transform: scale(1.7); } 55% { transform: scale(0.88); } 100% { transform: scale(1); } }
+        .header-top.rolling, .header-left.rolling { color: #5b9bff; opacity: 0.85; }
+        .header-top.num-pop, .header-left.num-pop { animation: numPop 0.5s ease-out; color: #fff; }
+        .team-logo { height: 1.3em; width: auto; flex-shrink: 0; filter: drop-shadow(0 1px 2px rgba(0,0,0,0.6)); }
+        .team-top-bar .team-logo { margin-right: 8px; }
+        .team-left-bar .team-logo { transform: rotate(180deg); margin-bottom: 8px; }
         .header-top { 
             background: #2d2d2d; color: #fff; font-weight: 800; font-size: 1.2rem; 
             position: sticky; top: var(--header-offset); z-index: 10; 
@@ -286,6 +301,8 @@
 
     <div id="payout-card" class="payout-card" style="display:none;"></div>
 
+    <div id="gm-rules" class="gm-rules" style="display:none;"></div>
+
     <div id="name-line" style="font-size:0.85rem; color:#aaa; margin-bottom:10px;"></div>
     <div id="period-note" style="font-size:0.85rem; color:#fbbf24; margin-bottom:8px;"></div>
     <div id="countdown" class="countdown-bar"></div>
@@ -441,18 +458,29 @@
 
             const takenCount = data.squares.length;
             const totalPot = takenCount * data.cost;
-            const quarterPayout = (totalPot / 4).toFixed(2);
+            const gm = data.scoring === 'goal_minute';
 
             document.getElementById('price-display').innerText = "$" + data.cost;
-            document.getElementById('payout-display').innerText = "$" + quarterPayout;
 
-            const payPeriods = [['Q1', 'q1'], ['Q2', 'q2'], ['Q3', 'q3'], ['Final', 'final']];
             const pc = document.getElementById('payout-card');
             pc.style.display = 'flex';
-            pc.innerHTML =
-                `<div class="pc-cost">$${data.cost} per square</div>` +
-                `<div class="pc-periods">${payPeriods.map(([lbl, sl]) => `<span style="color:${PERIOD_COLORS[sl]}">${lbl}</span>`).join('<span style="color:#555">&middot;</span>')}</div>` +
-                `<div class="pc-each">$${quarterPayout} to each winner so far</div>`;
+            if (gm) {
+                const goals = (data.goalMinute && data.goalMinute.totalGoals) || 0;
+                const each = goals > 0 ? (totalPot / goals).toFixed(2) : totalPot.toFixed(2);
+                document.getElementById('payout-display').innerText = "$" + each;
+                pc.innerHTML =
+                    `<div class="pc-cost">$${data.cost} per square &middot; pot $${totalPot}</div>` +
+                    `<div class="pc-periods"><span style="color:#4ade80">⚽ every goal pays</span></div>` +
+                    `<div class="pc-each">${goals > 0 ? `$${each} per goal &middot; ${goals} goal${goals !== 1 ? 's' : ''} so far` : 'splits evenly across every goal'}</div>`;
+            } else {
+                const quarterPayout = (totalPot / 4).toFixed(2);
+                document.getElementById('payout-display').innerText = "$" + quarterPayout;
+                const payPeriods = [['Q1', 'q1'], ['Q2', 'q2'], ['Q3', 'q3'], ['Final', 'final']];
+                pc.innerHTML =
+                    `<div class="pc-cost">$${data.cost} per square</div>` +
+                    `<div class="pc-periods">${payPeriods.map(([lbl, sl]) => `<span style="color:${PERIOD_COLORS[sl]}">${lbl}</span>`).join('<span style="color:#555">&middot;</span>')}</div>` +
+                    `<div class="pc-each">$${quarterPayout} to each winner so far</div>`;
+            }
 
             const remaining = ((data.cols || 10) * (data.rows || 10)) - takenCount;
             const countEl = document.getElementById('counter');
@@ -462,12 +490,16 @@
             // Winners are computed server-side.
             const winnersInfo = data.winners || {};
 
-            renderGrid(data, winnersInfo);
+            if (!revealing) {
+                renderGrid(data, winnersInfo);
+                maybeRevealNumbers(data);
+            }
             renderResults(data, winnersInfo);
             applyFit();
 
             lastData = data;
             updateNumbersRule(data);
+            updateGmRules(data);
             updatePeriodNote(data);
             updateLiveScore(data);
             updateCountdown();
@@ -520,9 +552,18 @@
             grid.classList.toggle('has-tally', tally);
             const curColor = (multi && current) ? (PERIOD_COLORS[current] || '#fff') : '';
 
+            const gm = data.scoring === 'goal_minute';
             const grad = (c1, c2) => `linear-gradient(135deg, ${c1 || '#333'}, ${c2 || c1 || '#333'})`;
-            grid.appendChild(createDiv('cell team-top-bar', data.teamTop, { backgroundImage: grad(data.colorTop, data.colorTop2), gridRow: '1', gridColumn: `${base + 1} / span ${cols}` }));
-            grid.appendChild(createDiv('cell team-left-bar', data.teamLeft, { backgroundImage: grad(data.colorLeft, data.colorLeft2), gridColumn: '1', gridRow: `${base + 1} / span ${rows}` }));
+            const logoImg = (url) => url ? `<img class="team-logo" src="${escapeHtml(url)}" alt="" onerror="this.remove()">` : '';
+            // On a goal-minute board the axes are the minute's digits, not the teams.
+            const topLabel = gm ? 'GOAL MINUTE · ones' : data.teamTop;
+            const leftLabel = gm ? 'tens' : data.teamLeft;
+            const topBar = createDiv('cell team-top-bar', topLabel, { backgroundImage: gm ? grad('#166534', '#22c55e') : grad(data.colorTop, data.colorTop2), gridRow: '1', gridColumn: `${base + 1} / span ${cols}` });
+            if (!gm && data.logoTop) topBar.innerHTML = logoImg(data.logoTop) + escapeHtml(data.teamTop);
+            grid.appendChild(topBar);
+            const leftBar = createDiv('cell team-left-bar', leftLabel, { backgroundImage: gm ? grad('#166534', '#22c55e') : grad(data.colorLeft, data.colorLeft2), gridColumn: '1', gridRow: `${base + 1} / span ${rows}` });
+            if (!gm && data.logoLeft) leftBar.innerHTML = logoImg(data.logoLeft) + escapeHtml(data.teamLeft);
+            grid.appendChild(leftBar);
 
             for (let c = 0; c < cols; c++) {
                 const h = createDiv('cell header-top', fmtHdr(data.topHeaders[c]), { gridRow: String(base), gridColumn: String(base + 1 + c) });
@@ -541,6 +582,12 @@
                 const w = winnersInfo[q];
                 if(w && w.winner) { const k = w.winner.r + ',' + w.winner.c; (winMap[k] = winMap[k] || []).push(q); }
             });
+            // Goal-minute: "r,c" -> how many goals (incl. the 0-0 whistle) that square won.
+            const gmWins = {};
+            if (gm && data.goalMinute) {
+                (data.goalMinute.goals || []).forEach(g => { if (g.winner) { const k = g.winner.r + ',' + g.winner.c; gmWins[k] = (gmWins[k] || 0) + 1; } });
+                if (data.goalMinute.whistle && data.goalMinute.whistle.winner) { const w = data.goalMinute.whistle.winner; const k = w.r + ',' + w.c; gmWins[k] = (gmWins[k] || 0) + 1; }
+            }
 
             for(let r=0; r<rows; r++){
                 const hl = createDiv('cell header-left', fmtHdr(data.leftHeaders[r]), { gridColumn: String(base), gridRow: String(base + 1 + r) });
@@ -567,6 +614,7 @@
                         if(w.winner && w.winner.r === r && w.winner.c === c) isWinner = true;
                     });
 
+                    if(gm && gmWins[r + ',' + c]) isWinner = true;
                     if(isWinner) cls += ' winner';
                     else if(isPhantom && !multi) cls += ' phantom';
                     const isLiveWin = data.liveWinner && data.liveWinner.r === r && data.liveWinner.c === c;
@@ -582,6 +630,12 @@
                         const badges = document.createElement('div');
                         badges.className = 'pwin-badges';
                         badges.innerHTML = (winMap[r + ',' + c] || []).map(q => `<span class="pwin-badge" style="background:${PERIOD_COLORS[slotForClient(data.numberMode, q)]}">${PERIOD_BADGE[q]}</span>`).join('');
+                        div.appendChild(badges);
+                    } else if(gm && isWinner) {
+                        const n = gmWins[r + ',' + c];
+                        const badges = document.createElement('div');
+                        badges.className = 'pwin-badges';
+                        badges.innerHTML = `<span class="pwin-badge" style="background:#22c55e">⚽${n > 1 ? n : ''}</span>`;
                         div.appendChild(badges);
                     }
                     const ann = (data.annotations || {})[r + ',' + c];
@@ -675,7 +729,8 @@
 
         function renderResults(data, winnersInfo) {
             const container = document.getElementById('results');
-            container.innerHTML = ''; 
+            container.innerHTML = '';
+            if (data.scoring === 'goal_minute') { renderGoalLog(data, container); return; }
             ['q1', 'q2', 'q3', 'final'].forEach(q => {
                 const info = winnersInfo[q];
                 if(info) {
@@ -702,15 +757,64 @@
             });
         }
 
+        function renderGoalLog(data, container) {
+            const gm = data.goalMinute || {};
+            const goals = gm.goals || [];
+            const card = (badge, badgeColor, title, winner, rolled) => {
+                const name = winner ? escapeHtml(winner.name) : (gm ? 'NO WINNER (empty)' : '');
+                const roll = rolled ? `<div style="font-size:0.72rem; color:#aaa; font-weight:normal;">(Rollover from empty square)</div>` : '';
+                return `<div class="result-card">
+                    <div><span class="quarter-badge" style="background:${badgeColor}">${badge}</span>
+                        <span style="margin-left:10px; font-weight:bold;">${title}</span></div>
+                    <div style="text-align:right;"><div style="font-weight:bold; color:#ffd700;">🏆 ${name}</div>${roll}</div>
+                </div>`;
+            };
+            if (!goals.length && !(gm.whistle && gm.whistle.winner)) {
+                container.innerHTML = `<div class="result-card"><div style="color:#aaa; font-size:0.9rem;">${gm.isFinal ? 'Final — no goals recorded.' : 'No goals yet. The first goal pays the square for its minute.'}</div></div>`;
+                return;
+            }
+            let html = goals.map(g => card(g.minute + "'", '#166534', escapeHtml(g.label || 'Goal'), g.winner, g.rolledOver)).join('');
+            if (gm.whistle && gm.whistle.winner) {
+                html += card('FT ' + gm.whistle.minute + "'", '#b45309', '0-0 — final whistle', gm.whistle.winner, gm.whistle.rolledOver);
+            }
+            container.innerHTML = html;
+        }
+
+        function updateGmRules(data) {
+            const el = document.getElementById('gm-rules');
+            if (!el) return;
+            if (data.scoring !== 'goal_minute') { el.style.display = 'none'; return; }
+            const rotate = data.numberMode === 'per_goal'
+                ? '<li>Numbers <strong>reshuffle after every goal</strong> — each goal is a fresh draw.</li>'
+                : '<li>Numbers are drawn once and stay fixed all match.</li>';
+            el.style.display = 'block';
+            el.innerHTML = `<h4>⚽ Goal-Minute Squares</h4><ul>
+                <li>Each goal pays the square for the <strong>minute</strong> it was scored — tens down the side, ones across the top.</li>
+                <li>Added time counts as its real minute: a goal at <strong>90+9 = 99</strong> → square (9, 9).</li>
+                <li>The pot splits <strong>evenly across every goal</strong> (penalties &amp; own goals count).</li>
+                <li><strong>0-0?</strong> The final-whistle minute wins the whole pot.</li>
+                ${rotate}</ul>`;
+        }
+
         // Tapping a taken square shows its claim info. Extend the body as we add
         // more per-square data (payment history, notes, etc.).
         function showSquareInfo(r, c, sq, data) {
             const top = (data.topHeaders || [])[c];
             const left = (data.leftHeaders || [])[r];
             const drawn = (top !== '?' && top !== undefined && left !== '?' && left !== undefined);
-            const numbers = drawn
-                ? `${data.teamTop || 'Top'} ${fmtHdr(top)} &bull; ${data.teamLeft || 'Left'} ${fmtHdr(left)}`
-                : 'Not drawn yet';
+            let numbers;
+            if (!drawn) {
+                numbers = 'Not drawn yet';
+            } else if (data.scoring === 'goal_minute') {
+                const tensArr = Array.isArray(left) ? left : [left];
+                const onesArr = Array.isArray(top) ? top : [top];
+                const mins = [];
+                tensArr.forEach(t => onesArr.forEach(o => mins.push(t * 10 + o)));
+                mins.sort((a, b) => a - b);
+                numbers = 'Wins on minute ' + mins.map(m => m + "'").join(', ');
+            } else {
+                numbers = `${data.teamTop || 'Top'} ${fmtHdr(top)} &bull; ${data.teamLeft || 'Left'} ${fmtHdr(left)}`;
+            }
             let claimed = 'Unknown';
             if (sq.claimed_at) { const d = new Date(sq.claimed_at); if (!isNaN(d)) claimed = d.toLocaleString(); }
             const paid = sq.is_paid === 1 ? 'Paid ✅' : 'Unpaid ❌';
@@ -738,7 +842,10 @@
         function updateNumbersRule(data) {
             const el = document.getElementById('numbers-rule');
             if (!el) return;
-            if (data.numberMode === 'per_quarter') el.innerText = 'Re-drawn at the start of every quarter.';
+            if (data.scoring === 'goal_minute') el.innerText = data.numberMode === 'per_goal'
+                ? 'Minute digits (0-9) drawn once the board locks, then reshuffled after each goal.'
+                : 'Minute digits (0-9) drawn once the board is locked, then fixed all match.';
+            else if (data.numberMode === 'per_quarter') el.innerText = 'Re-drawn at the start of every quarter.';
             else if (data.numberMode === 'per_half') el.innerText = 'Re-drawn at halftime.';
             else el.innerText = 'Randomly generated (0-9) once the board is locked, then fixed all game.';
         }
@@ -826,10 +933,12 @@
             localStorage.setItem(seenKey, '1');
             document.getElementById('welcome').classList.remove('open');
             updateNameLine();
+            if (lastData && !revealing) maybeRevealNumbers(lastData);
         }
         function skipWelcome() {
             localStorage.setItem(seenKey, '1');
             document.getElementById('welcome').classList.remove('open');
+            if (lastData && !revealing) maybeRevealNumbers(lastData);
         }
         function escapeHtml(s) { return String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
         function openRules() { document.getElementById('rules-modal').classList.add('open'); }
@@ -901,6 +1010,53 @@
             return d;
         }
 
+        // When the board locks and the numbers first get drawn, roll them into place
+        // for anyone watching live. Only fires on the transition from '?' to real numbers.
+        let revealRoll = null;
+        let revealTimers = [];
+        let revealing = false;
+        // Show the roll-in once per viewer per draw: the first time they load the board
+        // with numbers down. A re-draw gets a new id, so everyone sees it again.
+        function maybeRevealNumbers(data) {
+            if (!localStorage.getItem(seenKey)) return; // hold until the welcome screen is cleared
+            const hdrs = data.topHeaders || [];
+            const drawn = hdrs.length > 0 && hdrs.every((h) => h !== '?' && h !== undefined && h !== null);
+            const drawId = data.numbersDrawnAt;
+            if (!drawn || !drawId) return;
+            const key = 'revealSeen:' + poolId;
+            if (localStorage.getItem(key) === String(drawId)) return;
+            localStorage.setItem(key, String(drawId));
+            animateNumberReveal();
+        }
+        function animateNumberReveal() {
+            revealTimers.forEach(clearTimeout); revealTimers = [];
+            if (revealRoll) { clearInterval(revealRoll); revealRoll = null; }
+            const cells = Array.from(document.querySelectorAll('#grid .header-top, #grid .header-left'));
+            if (!cells.length) return;
+            revealing = true;
+            const items = cells.map((el) => ({ el, final: el.textContent }));
+            const settled = new Set();
+            const randDigit = () => String(Math.floor(Math.random() * 10));
+            items.forEach((it) => { it.el.classList.add('rolling'); });
+            revealRoll = setInterval(() => {
+                items.forEach((it) => { if (!settled.has(it.el)) it.el.textContent = randDigit(); });
+            }, 75);
+            const order = items.slice();
+            for (let i = order.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); const t = order[i]; order[i] = order[j]; order[j] = t; }
+            const stagger = Math.max(100, Math.min(230, 2200 / order.length));
+            order.forEach((it, idx) => {
+                const t = setTimeout(() => {
+                    settled.add(it.el);
+                    it.el.textContent = it.final;
+                    it.el.classList.remove('rolling');
+                    it.el.classList.add('num-pop');
+                    setTimeout(() => it.el.classList.remove('num-pop'), 520);
+                    if (settled.size === items.length) { revealing = false; if (revealRoll) { clearInterval(revealRoll); revealRoll = null; } }
+                }, 650 + idx * stagger);
+                revealTimers.push(t);
+            });
+        }
+
         let fitMode = localStorage.getItem('fitMode') === '1';
         function applyFit() {
             const container = document.querySelector('.grid-container');
@@ -908,6 +1064,10 @@
             const btn = document.getElementById('fit-btn');
             if (!container || !grid) return;
             if (fitMode) {
+                // Reset any sideways scroll first, or the scaled-from-top-left grid stays
+                // shifted off and looks cut off.
+                container.scrollLeft = 0;
+                container.scrollTop = 0;
                 grid.style.transformOrigin = 'top left';
                 grid.style.transform = 'none';
                 const gw = grid.offsetWidth, gh = grid.offsetHeight;

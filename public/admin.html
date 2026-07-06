@@ -106,6 +106,12 @@
         }
         .grid .team-top-bar { grid-column: 3 / span var(--cols, 10); grid-row: 1; border-radius: 12px; color: #fff; font-weight: 800; font-size: 1.1rem; letter-spacing: 1px; text-shadow: 0 2px 4px rgba(0,0,0,0.8); }
         .grid .team-left-bar { grid-column: 1; grid-row: 3 / span var(--rows, 10); border-radius: 12px; color: #fff; font-weight: 800; font-size: 1.1rem; letter-spacing: 1px; writing-mode: vertical-rl; transform: rotate(180deg); text-shadow: 0 2px 4px rgba(0,0,0,0.8); }
+        @keyframes numPop { 0% { transform: scale(1.7); } 55% { transform: scale(0.88); } 100% { transform: scale(1); } }
+        #full-grid .num-rolling, #mini-grid .num-rolling { color: #5b9bff; }
+        #full-grid .num-pop, #mini-grid .num-pop { animation: numPop 0.5s ease-out; }
+        .grid .team-logo { height: 1.3em; width: auto; flex-shrink: 0; filter: drop-shadow(0 1px 2px rgba(0,0,0,0.6)); }
+        .grid .team-top-bar .team-logo { margin-right: 6px; }
+        .grid .team-left-bar .team-logo { transform: rotate(180deg); margin-bottom: 6px; }
         .grid .header-top, .grid .header-left { background: #2d2d2d; color: #fff; font-weight: 800; font-size: 1rem; border: 1px solid #444; }
         .grid .corner-dead { background: transparent; box-shadow: none; }
         .grid .square { cursor: pointer; color: #666; background: #252525; }
@@ -250,6 +256,11 @@
                     <option value="nba">NBA</option>
                     <option value="wnba">WNBA</option>
                     <option value="ncaab">College Basketball</option>
+                    <option value="wc">World Cup ⚽</option>
+                    <option value="wwc">Women's World Cup ⚽</option>
+                    <option value="ucl">Champions League ⚽</option>
+                    <option value="epl">Premier League ⚽</option>
+                    <option value="mls">MLS ⚽</option>
                 </select>
             </div>
             <div class="row">
@@ -274,7 +285,7 @@
         <div class="panel-box" id="scores-panel">
             <h3>3. Game Scores</h3>
             <table style="width:100%; color:white;">
-                <tr><td></td><td style="color:#aaa; font-size:0.8rem;">TOP</td><td style="color:#aaa; font-size:0.8rem;">LEFT</td></tr>
+                <tr><td></td><td id="sc-top-label" style="color:#aaa; font-size:0.8rem;">Top</td><td id="sc-left-label" style="color:#aaa; font-size:0.8rem;">Left</td></tr>
                 <tr><td>Q1</td><td><input class="score-in" id="s-q1-top"></td><td><input class="score-in" id="s-q1-left"></td></tr>
                 <tr><td>Q2</td><td><input class="score-in" id="s-q2-top"></td><td><input class="score-in" id="s-q2-left"></td></tr>
                 <tr><td>Q3</td><td><input class="score-in" id="s-q3-top"></td><td><input class="score-in" id="s-q3-left"></td></tr>
@@ -282,6 +293,62 @@
             </table>
             <div style="text-align:right; margin-top:10px;">
                 <button class="green" onclick="saveScores()">💾 Update Scores</button>
+            </div>
+
+            <div style="border-top:1px solid #333; margin-top:16px; padding-top:14px;">
+                <label style="display:flex; align-items:center; gap:8px; cursor:pointer; font-weight:600; color:#fff;">
+                    <input type="checkbox" id="live-enable" onchange="toggleLive()" style="width:auto; flex:0 0 auto; margin:0;">
+                    Show a live scoreboard on the board
+                </label>
+                <p style="font-size:0.8rem; color:#888; margin:6px 0 0;">Shows the running score plus the white "winning now" highlight while the game is on. Update it as the score changes.</p>
+                <div id="live-fields" style="display:none; margin-top:10px;">
+                    <div class="row" style="flex-wrap:wrap;">
+                        <span class="label">Score:</span>
+                        <span id="live-top-lbl" style="color:#aaa; font-size:0.8rem;">Top</span>
+                        <input class="score-in" id="live-top">
+                        <span id="live-left-lbl" style="color:#aaa; font-size:0.8rem;">Left</span>
+                        <input class="score-in" id="live-left">
+                        <select id="live-period">
+                            <option value="q1">Q1</option>
+                            <option value="q2">Q2</option>
+                            <option value="q3">Q3</option>
+                            <option value="final">Final</option>
+                        </select>
+                    </div>
+                    <div class="row">
+                        <span class="label">Status:</span>
+                        <select id="live-state">
+                            <option value="in">In progress</option>
+                            <option value="post">Final</option>
+                        </select>
+                    </div>
+                    <div style="text-align:right;">
+                        <button class="primary" onclick="saveLiveScore()">Update live score</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="panel-box" id="goals-panel" style="display:none;">
+            <h3>⚽ Goals (minute board)</h3>
+            <p style="font-size:0.8rem; color:#888; margin:0 0 10px;">Each goal pays the square for the <strong>minute</strong> it was scored. On <strong>Live (ESPN)</strong> these fill in automatically. You can also add them by hand to test.</p>
+            <div class="row" style="flex-wrap:wrap;">
+                <span class="label">Minute:</span>
+                <input id="goal-min" placeholder="63 or 90+9" style="width:100px; flex:0 0 auto;">
+                <input id="goal-scorer" placeholder="Scorer (optional)" style="flex:1 1 120px; min-width:0;">
+            </div>
+            <div style="text-align:right; margin-top:8px;">
+                <button class="small" onclick="clearGoals()">Clear all</button>
+                <button class="green" onclick="addGoal()">+ Add goal</button>
+            </div>
+            <div id="goals-list" style="margin-top:12px;"></div>
+            <div style="border-top:1px solid #333; margin-top:14px; padding-top:12px;">
+                <p style="font-size:0.8rem; color:#888; margin:0 0 8px;">Test a scoreless finish: sets a 0-0 final so the <strong>final-whistle minute</strong> wins the whole pot.</p>
+                <div class="row" style="flex-wrap:wrap;">
+                    <span class="label">0-0 whistle:</span>
+                    <input id="whistle-min" placeholder="90+4" style="width:100px; flex:0 0 auto;">
+                    <button class="primary" onclick="simZeroZero()">Simulate 0-0 final</button>
+                </div>
             </div>
         </div>
 
@@ -294,12 +361,16 @@
         <div class="panel-box">
             <h3>5. Grid Management</h3>
             <div class="row">
-                <span class="label">Numbers:</span>
-                <select id="number-mode" onchange="setNumberMode()">
-                    <option value="once">Static (one set all game)</option>
-                    <option value="per_quarter">Re-draw each quarter</option>
-                    <option value="per_half">Re-draw at halftime</option>
+                <span class="label">Game type:</span>
+                <select id="scoring-mode" onchange="setFormat()">
+                    <option value="digits">Classic — score digits</option>
+                    <option value="goal_minute">Soccer — goal minute ⚽</option>
                 </select>
+            </div>
+            <p id="scoring-note" style="font-size:0.78rem; color:#888; margin:2px 0 10px;"></p>
+            <div class="row">
+                <span class="label">Numbers:</span>
+                <select id="number-mode" onchange="setNumberMode()"></select>
             </div>
             <div id="advance-wrap" style="text-align:center; margin:10px 0; display:none;">
                 <button class="primary" id="advance-btn" onclick="advanceNumbers()">Draw next period's numbers</button>
@@ -452,31 +523,55 @@
                 if (data.espnStart) { const sd = new Date(data.espnStart); if (!isNaN(sd)) si.value = toLocalInput(sd); }
                 else si.value = '';
                 document.title = (data.name || 'Admin') + ' - Admin';
-                document.getElementById('number-mode').value = data.numberMode || 'once';
+                document.getElementById('scoring-mode').value = data.scoring || 'digits';
+                updateModeOptions(data.scoring || 'digits', data.numberMode || 'once');
+                updateScoringNote(data.scoring || 'digits');
                 const di = document.getElementById('game-date');
                 if (di && !di.value) di.value = new Date().toISOString().slice(0, 10);
                 ['q1','q2','q3','final'].forEach(q => {
                     document.getElementById(`s-${q}-top`).value = data.scores[q].top;
                     document.getElementById(`s-${q}-left`).value = data.scores[q].left;
                 });
+                const lv = data.live;
+                document.getElementById('live-enable').checked = !!lv;
+                document.getElementById('live-fields').style.display = lv ? 'block' : 'none';
+                if (lv) {
+                    document.getElementById('live-top').value = lv.top != null ? lv.top : '';
+                    document.getElementById('live-left').value = lv.left != null ? lv.left : '';
+                    document.getElementById('live-period').value = ['q1', 'q2', 'q3', 'final'].includes(lv.period) ? lv.period : 'q1';
+                    document.getElementById('live-state').value = lv.state === 'post' ? 'post' : 'in';
+                }
             }
 
             document.getElementById('lock-btn').style.display = data.isLocked ? 'none' : 'inline-block';
             document.getElementById('unlock-btn').style.display = data.isLocked ? 'inline-block' : 'none';
 
-            renderGrid(data);
-            renderFullBoard(data);
+            if (!revealing) {
+                renderGrid(data);
+                renderFullBoard(data);
+                maybeRevealNumbers(data);
+            }
             renderStats(data.squares, data.cost);
             renderLog(data);
             renderGameStatus(data);
             renderNumbers(data);
+            renderGoals(data);
+
+            // Label the score columns and the live-score inputs with the actual team names.
+            const tt = data.teamTop || 'Top', tl = data.teamLeft || 'Left';
+            ['sc-top-label', 'live-top-lbl'].forEach((id) => { const el = document.getElementById(id); if (el) el.innerText = tt; });
+            ['sc-left-label', 'live-left-lbl'].forEach((id) => { const el = document.getElementById(id); if (el) el.innerText = tl; });
 
             const managed = data.scoreSource === 'live';
+            const goalMode = data.scoring === 'goal_minute';
             const teamSec = document.getElementById('team-section');
             const scoresPanel = document.getElementById('scores-panel');
+            const goalsPanel = document.getElementById('goals-panel');
             const espnNote = document.getElementById('espn-note');
             if (teamSec) teamSec.style.display = managed ? 'none' : '';
-            if (scoresPanel) scoresPanel.style.display = managed ? 'none' : '';
+            // Period-score entry is meaningless on a minute board; the goals panel replaces it.
+            if (scoresPanel) scoresPanel.style.display = (managed || goalMode) ? 'none' : '';
+            if (goalsPanel) goalsPanel.style.display = goalMode ? '' : 'none';
             if (espnNote) espnNote.style.display = managed ? 'block' : 'none';
             loadActivity();
         }
@@ -567,8 +662,13 @@
             const curColor = (multi && current) ? (PERIOD_COLORS[current] || '#fff') : '';
 
             const grad = (c1, c2) => `linear-gradient(135deg, ${c1 || '#333'}, ${c2 || c1 || '#333'})`;
-            grid.appendChild(mk('cell team-top-bar', data.teamTop, { backgroundImage: grad(data.colorTop, data.colorTop2), gridRow: '1', gridColumn: `${base + 1} / span ${cols}` }));
-            grid.appendChild(mk('cell team-left-bar', data.teamLeft, { backgroundImage: grad(data.colorLeft, data.colorLeft2), gridColumn: '1', gridRow: `${base + 1} / span ${rows}` }));
+            const logoImg = (url) => url ? `<img class="team-logo" src="${escapeHtml(url)}" alt="" onerror="this.remove()">` : '';
+            const topBar = mk('cell team-top-bar', data.teamTop, { backgroundImage: grad(data.colorTop, data.colorTop2), gridRow: '1', gridColumn: `${base + 1} / span ${cols}` });
+            if (data.logoTop) topBar.innerHTML = logoImg(data.logoTop) + escapeHtml(data.teamTop);
+            grid.appendChild(topBar);
+            const leftBar = mk('cell team-left-bar', data.teamLeft, { backgroundImage: grad(data.colorLeft, data.colorLeft2), gridColumn: '1', gridRow: `${base + 1} / span ${rows}` });
+            if (data.logoLeft) leftBar.innerHTML = logoImg(data.logoLeft) + escapeHtml(data.teamLeft);
+            grid.appendChild(leftBar);
 
             for (let c = 0; c < cols; c++) {
                 const h = mk('cell header-top', fmtHdr(data.topHeaders[c]), { gridRow: String(base), gridColumn: String(base + 1 + c) });
@@ -801,6 +901,26 @@
             uiToast('Scores updated');
         }
 
+        function toggleLive() {
+            const on = document.getElementById('live-enable').checked;
+            document.getElementById('live-fields').style.display = on ? 'block' : 'none';
+            if (!on) clearLiveScore();
+        }
+        async function saveLiveScore() {
+            const body = {
+                top: document.getElementById('live-top').value,
+                left: document.getElementById('live-left').value,
+                period: document.getElementById('live-period').value,
+                state: document.getElementById('live-state').value,
+            };
+            await apiCall('live-score', body);
+            uiToast('Live score updated');
+        }
+        async function clearLiveScore() {
+            await apiCall('live-score', { clear: true });
+            uiToast('Live score cleared');
+        }
+
         async function saveTeams() {
             const teamTop = document.getElementById('team-top').value;
             const colorTop = document.getElementById('color-top').value;
@@ -812,7 +932,7 @@
             uiToast('Teams saved');
         }
 
-        const LEAGUE_LABELS = { nfl: 'NFL', ncaaf: 'College Football', nba: 'NBA', wnba: 'WNBA', ncaab: 'College Basketball' };
+        const LEAGUE_LABELS = { nfl: 'NFL', ncaaf: 'College Football', nba: 'NBA', wnba: 'WNBA', ncaab: 'College Basketball', wc: 'World Cup', wwc: "Women's World Cup", ucl: 'Champions League', epl: 'Premier League', mls: 'MLS' };
 
         function renderGameStatus(data) {
             const linked = document.getElementById('linked-game');
@@ -858,6 +978,23 @@
         }
 
         const PERIOD_LABELS = { q1: 'Q1', q2: 'Q2', q3: 'Q3', final: 'Final', h1: '1st half', h2: '2nd half', all: 'all game' };
+        const SOCCER_LEAGUES = new Set(['wc', 'wwc', 'ucl', 'epl', 'mls']);
+        // Rebuild the Numbers dropdown to match the game type (digits vs goal-minute).
+        function updateModeOptions(scoring, current) {
+            const sel = document.getElementById('number-mode');
+            const opts = scoring === 'goal_minute'
+                ? [['once', 'Static (one shuffle all game)'], ['per_goal', 'Re-shuffle after each goal']]
+                : [['once', 'Static (one set all game)'], ['per_quarter', 'Re-draw each quarter'], ['per_half', 'Re-draw at halftime']];
+            sel.innerHTML = opts.map(([v, l]) => `<option value="${v}">${l}</option>`).join('');
+            sel.value = opts.some(([v]) => v === current) ? current : 'once';
+        }
+        function updateScoringNote(scoring) {
+            const el = document.getElementById('scoring-note');
+            if (!el) return;
+            el.innerText = scoring === 'goal_minute'
+                ? 'Axes are the tens/ones of the goal minute. Every goal pays; 0-0 pays the final-whistle minute. Pick a soccer league under Game & Live Scores.'
+                : 'Classic squares: each axis is a team, winners come from the last digit of the score.';
+        }
         const PERIOD_COLORS = { q1: '#4aa8ff', q2: '#4ade80', q3: '#fbbf24', final: '#ff6b6b', h1: '#4aa8ff', h2: '#fbbf24' };
         const PERIOD_BADGE = { q1: 'Q1', q2: 'Q2', q3: 'Q3', final: 'F', h1: 'H1', h2: 'H2' };
         function slotForClient(mode, period) {
@@ -874,6 +1011,46 @@
             if (Array.isArray(h)) return h.slice().sort((a, b) => a - b).join(' ');
             return (h === null || h === undefined) ? '?' : h;
         }
+
+        // Roll the numbers into place the first time this admin view sees a given draw.
+        let revealRoll = null, revealTimers = [], revealing = false;
+        function maybeRevealNumbers(data) {
+            const hdrs = data.topHeaders || [];
+            const drawn = hdrs.length > 0 && hdrs.every((h) => h !== '?' && h !== undefined && h !== null);
+            const drawId = data.numbersDrawnAt;
+            if (!drawn || !drawId) return;
+            const key = 'revealSeen:admin:' + poolId;
+            if (localStorage.getItem(key) === String(drawId)) return;
+            localStorage.setItem(key, String(drawId));
+            animateNumberReveal();
+        }
+        function animateNumberReveal() {
+            revealTimers.forEach(clearTimeout); revealTimers = [];
+            if (revealRoll) { clearInterval(revealRoll); revealRoll = null; }
+            const cells = Array.from(document.querySelectorAll('#full-grid .header-top, #full-grid .header-left, #mini-grid .header'))
+                .filter((c) => { const t = (c.textContent || '').trim(); return t && t !== '?'; });
+            if (!cells.length) return;
+            revealing = true;
+            const items = cells.map((el) => ({ el, final: el.textContent }));
+            const settled = new Set();
+            const randDigit = () => String(Math.floor(Math.random() * 10));
+            items.forEach((it) => it.el.classList.add('num-rolling'));
+            revealRoll = setInterval(() => { items.forEach((it) => { if (!settled.has(it.el)) it.el.textContent = randDigit(); }); }, 75);
+            const order = items.slice();
+            for (let i = order.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); const t = order[i]; order[i] = order[j]; order[j] = t; }
+            const stagger = Math.max(100, Math.min(230, 2200 / order.length));
+            order.forEach((it, idx) => {
+                const t = setTimeout(() => {
+                    settled.add(it.el);
+                    it.el.textContent = it.final;
+                    it.el.classList.remove('num-rolling');
+                    it.el.classList.add('num-pop');
+                    setTimeout(() => it.el.classList.remove('num-pop'), 520);
+                    if (settled.size === items.length) { revealing = false; if (revealRoll) { clearInterval(revealRoll); revealRoll = null; } }
+                }, 650 + idx * stagger);
+                revealTimers.push(t);
+            });
+        }
         function multiHeader(cls, sets, axis, i) {
             const d = document.createElement('div');
             d.className = 'cell ' + cls + ' multi';
@@ -883,6 +1060,57 @@
 
         async function setNumberMode() {
             await apiCall('number-mode', { mode: document.getElementById('number-mode').value });
+        }
+        async function setFormat() {
+            const scoring = document.getElementById('scoring-mode').value;
+            updateModeOptions(scoring, 'once');
+            await apiCall('format', { scoring, numberMode: document.getElementById('number-mode').value });
+        }
+        async function addGoal() {
+            const minute = document.getElementById('goal-min').value.trim();
+            if (!minute) { uiToast('Enter a minute'); return; }
+            const label = document.getElementById('goal-scorer').value.trim();
+            const res = await fetch(`/api/pool/${poolId}/admin/goals`, {
+                method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Admin-Token': adminToken },
+                body: JSON.stringify({ minute, label })
+            });
+            const d = await res.json().catch(() => ({}));
+            if (!res.ok) { uiToast(d.error || 'Could not add goal'); return; }
+            document.getElementById('goal-min').value = '';
+            document.getElementById('goal-scorer').value = '';
+            loadAdmin(false);
+        }
+        async function clearGoals() {
+            if (!(await uiConfirm('Clear all goals on this board?'))) return;
+            await apiCall('goals/clear', {});
+        }
+        async function simZeroZero() {
+            const w = document.getElementById('whistle-min').value.trim() || '90';
+            await apiCall('live-score', { top: '0', left: '0', state: 'post', whistleMinute: w });
+            uiToast('Set a 0-0 final — whistle minute ' + w);
+        }
+        function renderGoals(data) {
+            const wrap = document.getElementById('goals-list');
+            if (!wrap) return;
+            const gm = data.goalMinute || {};
+            const goals = gm.goals || [];
+            if (!goals.length && !(gm.whistle && gm.whistle.winner)) {
+                wrap.innerHTML = `<div style="color:#666; font-size:0.85rem;">No goals yet. The first goal pays the square for its minute.</div>`;
+                return;
+            }
+            let html = goals.map((g) => {
+                const sq = g.winner ? escapeHtml(g.winner.name) : (g.target ? 'empty → rolled over' : 'numbers not drawn');
+                const roll = g.rolledOver ? ' <span style="color:#888;">(rollover)</span>' : '';
+                return `<div style="display:flex; justify-content:space-between; gap:8px; padding:4px 0; border-bottom:1px solid #2a2a2a; font-size:0.86rem;">
+                    <span><span style="color:#4ade80; font-weight:700;">${g.minute}'</span> ${escapeHtml(g.label || 'Goal')}</span>
+                    <span style="color:#ffd700; text-align:right;">${sq}${roll}</span></div>`;
+            }).join('');
+            if (gm.whistle && gm.whistle.winner) {
+                html += `<div style="display:flex; justify-content:space-between; gap:8px; padding:6px 0 0; font-size:0.86rem;">
+                    <span><span style="color:#fbbf24; font-weight:700;">FT ${gm.whistle.minute}'</span> 0-0 whistle</span>
+                    <span style="color:#ffd700;">${escapeHtml(gm.whistle.winner.name)}</span></div>`;
+            }
+            wrap.innerHTML = html;
         }
         async function advanceNumbers() {
             await apiCall('advance-numbers', {});

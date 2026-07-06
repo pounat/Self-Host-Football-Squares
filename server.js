@@ -136,6 +136,18 @@ async function migrate() {
         await migrateToV16();
         await dbRun('PRAGMA user_version = 16');
     }
+    if (user_version < 17) {
+        await migrateToV17();
+        await dbRun('PRAGMA user_version = 17');
+    }
+    if (user_version < 18) {
+        await migrateToV18();
+        await dbRun('PRAGMA user_version = 18');
+    }
+    if (user_version < 19) {
+        await migrateToV19();
+        await dbRun('PRAGMA user_version = 19');
+    }
 }
 
 async function migrateToV1() {
@@ -355,6 +367,30 @@ async function migrateToV16() {
     }
 }
 
+async function migrateToV17() {
+    const cols = await dbAll('PRAGMA table_info(pools)');
+    if (!cols.some((c) => c.name === 'logo_top')) await dbExec('ALTER TABLE pools ADD COLUMN logo_top TEXT');
+    if (!cols.some((c) => c.name === 'logo_left')) await dbExec('ALTER TABLE pools ADD COLUMN logo_left TEXT');
+}
+
+async function migrateToV18() {
+    const cols = await dbAll('PRAGMA table_info(pools)');
+    if (!cols.some((c) => c.name === 'numbers_drawn_at')) await dbExec('ALTER TABLE pools ADD COLUMN numbers_drawn_at INTEGER');
+}
+
+// Soccer "goal-minute" boards: a scoring format flag on the pool, plus a table of
+// goals (each carries the minute it was scored and which number set it locked against).
+async function migrateToV19() {
+    const cols = await dbAll('PRAGMA table_info(pools)');
+    if (!cols.some((c) => c.name === 'scoring')) await dbExec("ALTER TABLE pools ADD COLUMN scoring TEXT DEFAULT 'digits'");
+    await dbExec(`
+        CREATE TABLE IF NOT EXISTS goals (
+            pool_id TEXT, idx INTEGER, minute INTEGER, label TEXT, team_side TEXT, slot TEXT,
+            UNIQUE(pool_id, idx)
+        );
+    `);
+}
+
 async function logActivity(poolId, text) {
     try {
         await dbRun('INSERT INTO activity (pool_id, text, at) VALUES (?, ?, ?)', [poolId, text, new Date().toISOString()]);
@@ -417,6 +453,42 @@ function computeWinners(squares, scores, mode, slotsMap, cols, rows) {
     return winners;
 }
 
+// --- GOAL-MINUTE (soccer) scoring ---
+// The two axes are the tens and ones digits of the minute a goal is scored, not
+// team scores. A goal at 63' pays the square at (tens 6, ones 3). Added time keeps
+// its real minute, capped at 99: 90+9 -> 99, 45+2 -> 47.
+function gmFindWinner(squares, r, c, cols, rows) {
+    let sr = r, sc = c;
+    for (let i = 0; i < cols * rows; i++) {
+        const f = squares.find((s) => s.row === sr && s.col === sc);
+        if (f) return { r: sr, c: sc, name: f.nickname || f.name, rolledOver: (sr !== r || sc !== c) };
+        sc++; if (sc >= cols) { sc = 0; sr++; if (sr >= rows) sr = 0; }
+    }
+    return null;
+}
+// Resolve one minute to its target square and rolled-over winner. Top axis = ones
+// digit, left axis = tens digit. Handles single-digit and grouped (small-board) headers.
+function minuteToWinner(squares, minute, hdr, cols, rows) {
+    if (!hdr || minute == null) return { target: null, winner: null, rolledOver: false };
+    const tens = Math.floor(minute / 10), ones = minute % 10;
+    const c = slotIndexOf(hdr.top, ones);
+    const r = slotIndexOf(hdr.left, tens);
+    if (c === -1 || r === -1) return { target: null, winner: null, rolledOver: false };
+    const w = gmFindWinner(squares, r, c, cols, rows);
+    return {
+        target: { r, c },
+        winner: w ? { r: w.r, c: w.c, name: w.name } : null,
+        rolledOver: w ? w.rolledOver : false,
+    };
+}
+function computeGoalMinuteWinners(squares, goals, slotsMap, cols, rows) {
+    return goals.map((g) => {
+        const hdr = slotsMap[g.slot] || slotsMap.all;
+        const res = minuteToWinner(squares, g.minute, hdr, cols, rows);
+        return { idx: g.idx, minute: g.minute, label: g.label, side: g.team_side, target: res.target, winner: res.winner, rolledOver: res.rolledOver };
+    });
+}
+
 // --- ESPN (free public scoreboard API, no key) ---
 const ESPN_BASE = 'https://site.api.espn.com/apis/site/v2/sports';
 const LEAGUES = {
@@ -425,7 +497,13 @@ const LEAGUES = {
     nba: { path: 'basketball/nba', label: 'NBA' },
     wnba: { path: 'basketball/wnba', label: 'WNBA' },
     ncaab: { path: 'basketball/mens-college-basketball', label: 'College Basketball' },
+    wc: { path: 'soccer/fifa.world', label: 'World Cup', soccer: true },
+    wwc: { path: 'soccer/fifa.wwc', label: "Women's World Cup", soccer: true },
+    ucl: { path: 'soccer/uefa.champions', label: 'Champions League', soccer: true },
+    epl: { path: 'soccer/eng.1', label: 'Premier League', soccer: true },
+    mls: { path: 'soccer/usa.1', label: 'MLS', soccer: true },
 };
+const isSoccerLeague = (league) => !!(LEAGUES[league] && LEAGUES[league].soccer);
 
 async function espnFetch(url) {
     const res = await fetch(url, { headers: { Accept: 'application/json' } });
@@ -526,32 +604,78 @@ async function espnSchedule(league, teamId) {
     return events.map(parseScheduleGame);
 }
 
+// "63'" -> 63 ; "90'+9'" -> 99. Regulation + stoppage summed, capped at 99.
+function parseGoalMinute(clockDisp) {
+    if (clockDisp == null) return null;
+    const nums = String(clockDisp).replace(/[^0-9+]/g, '').split('+').map((s) => parseInt(s, 10)).filter((n) => !Number.isNaN(n));
+    if (!nums.length) return null;
+    return Math.max(0, Math.min(99, nums.reduce((a, b) => a + b, 0)));
+}
+// Pull scoring events (goals, penalties, own goals) with their minute, plus the
+// full-time whistle minute, from an ESPN soccer summary's keyEvents feed.
+function extractSoccerEvents(sum, home, away) {
+    const events = Array.isArray(sum && sum.keyEvents) ? sum.keyEvents : [];
+    const goals = [];
+    let whistleMinute = null;
+    for (const k of events) {
+        const typeText = (k.type && k.type.text) || '';
+        const clock = (k.clock && k.clock.displayValue) || '';
+        if (/end regular time|full[\s-]?time|^ft$|match ends|end second half/i.test(typeText)) {
+            const wm = parseGoalMinute(clock);
+            if (wm != null) whistleMinute = wm;
+        }
+        if (/shootout/i.test(typeText)) continue; // a penalty shootout is not a match-minute event
+        const scored = k.scoringPlay === true || /(^|\s)goal(\s|$)/i.test(typeText) || (/penalty/i.test(typeText) && /scored|goal/i.test(typeText));
+        if (!scored || /missed|saved|no goal/i.test(typeText)) continue;
+        const minute = parseGoalMinute(clock);
+        if (minute == null) continue;
+        const teamId = (k.team && k.team.id) || '';
+        const isHome = home && home.id && String(teamId) === String(home.id);
+        const side = isHome ? 'left' : 'top'; // home = left axis, away = top axis
+        const scorer = (k.participants && k.participants[0] && k.participants[0].athlete && (k.participants[0].athlete.displayName || k.participants[0].athlete.shortName)) || '';
+        const isOwn = /own goal/i.test(typeText);
+        const isPen = /penalty/i.test(typeText);
+        let label = scorer || (isOwn ? 'Own goal' : 'Goal');
+        if (isOwn) label += ' (OG)'; else if (isPen) label += ' (pen)';
+        goals.push({ minute, label, side });
+    }
+    goals.sort((a, b) => a.minute - b.minute);
+    return { goals, whistleMinute };
+}
+
 function parseSummary(sum, espnId) {
     const comp = ((sum.header && sum.header.competitions) || [])[0] || {};
     const competitors = comp.competitors || [];
     const st = (comp.status && comp.status.type) || {};
     const mk = (c) => {
         const t = (c && c.team) || {};
+        const logo = t.logo || ((Array.isArray(t.logos) && t.logos[0] && t.logos[0].href) || '');
         return {
             id: t.id,
             name: t.displayName || t.name || 'Team',
             abbrev: t.abbreviation || '',
             color: t.color ? '#' + t.color : '',
             altColor: t.alternateColor ? '#' + t.alternateColor : '',
+            logo: logo,
             score: c && c.score != null ? String(c.score) : '0',
             linescores: c && Array.isArray(c.linescores) ? c.linescores.map((l) => Number(l.value != null ? l.value : l.displayValue) || 0) : [],
         };
     };
     const home = competitors.find((c) => c.homeAway === 'home') || competitors[0] || {};
     const away = competitors.find((c) => c.homeAway === 'away') || competitors[1] || {};
+    const homeObj = mk(home), awayObj = mk(away);
+    const soccer = extractSoccerEvents(sum, homeObj, awayObj);
     return {
         espnId: String(espnId),
         date: comp.date || '',
         state: st.state || 'pre',
         statusDetail: st.shortDetail || st.description || '',
         period: (comp.status && comp.status.period) || 0,
-        home: mk(home),
-        away: mk(away),
+        clock: (comp.status && comp.status.displayClock) || '',
+        home: homeObj,
+        away: awayObj,
+        goals: soccer.goals,
+        whistleMinute: soccer.whistleMinute,
     };
 }
 
@@ -592,22 +716,24 @@ const espnSearch = ah(async (req, res) => {
 async function linkGameToPool(poolId, league, espnId) {
     const g = await espnSummary(league, espnId);
     await dbRun(
-        `UPDATE pools SET team_top = ?, color_top = ?, color_top2 = ?,
-            team_left = ?, color_left = ?, color_left2 = ?,
+        `UPDATE pools SET team_top = ?, color_top = ?, color_top2 = ?, logo_top = ?,
+            team_left = ?, color_left = ?, color_left2 = ?, logo_left = ?,
             espn_league = ?, espn_event_id = ?, espn_start = ?, score_source = 'live', live_done = 0 WHERE id = ?`,
         [
-            g.away.name, g.away.color || '#333', g.away.altColor || g.away.color || '#555',
-            g.home.name, g.home.color || '#333', g.home.altColor || g.home.color || '#555',
+            g.away.name, g.away.color || '#333', g.away.altColor || g.away.color || '#555', g.away.logo || null,
+            g.home.name, g.home.color || '#333', g.home.altColor || g.home.color || '#555', g.home.logo || null,
             league, String(espnId), g.date || null, poolId,
         ]
     );
-    await applyLiveScores(poolId, g);
+    const sc = (await dbGet('SELECT scoring FROM pools WHERE id = ?', [poolId]) || {}).scoring;
+    await applyLiveScores(poolId, g, sc);
 }
 
 // Write a linked game's scores into the pool. Top axis = away team, left axis =
 // home team. Scores are cumulative per period and only written once a period has
 // a linescore (started/finished), so winners only show for periods that exist.
-async function applyLiveScores(poolId, g) {
+async function applyLiveScores(poolId, g, scoring) {
+    if (scoring === 'goal_minute') return applyGoalMinuteLive(poolId, g);
     const away = g.away, home = g.home;
     const len = Math.min(away.linescores.length, home.linescores.length);
     const cum = (arr, n) => arr.slice(0, n).reduce((a, b) => a + b, 0);
@@ -633,10 +759,54 @@ async function applyLiveScores(poolId, g) {
     await dbRun('UPDATE pools SET live_state = ?, live_done = ? WHERE id = ?', [live, finalState ? 1 : 0, poolId]);
 }
 
+// Goal-minute boards: append any newly-seen goals from the ESPN feed. In per_goal
+// mode each new goal snapshots the current numbers as its own slot, then the board
+// reshuffles for the next goal. Goals are matched by minute+scorer so a re-poll
+// never double-counts one.
+async function applyGoalMinuteLive(poolId, g) {
+    const mode = await poolMode(poolId);
+    const { cols, rows } = await poolDims(poolId);
+    await drawNumbersIfNeeded(poolId); // ensure an initial set exists to lock goals against
+    const existing = await dbAll('SELECT idx, minute, label FROM goals WHERE pool_id = ? ORDER BY idx', [poolId]);
+    const seen = new Set(existing.map((r) => r.minute + '|' + r.label));
+    let nextIdx = existing.reduce((m, r) => Math.max(m, r.idx), 0);
+    for (const gl of (g.goals || [])) {
+        const sig = gl.minute + '|' + gl.label;
+        if (seen.has(sig)) continue;
+        seen.add(sig);
+        nextIdx += 1;
+        const slot = await lockGoalSlot(poolId, mode, nextIdx, cols, rows);
+        await dbRun(
+            `INSERT INTO goals (pool_id, idx, minute, label, team_side, slot) VALUES (?, ?, ?, ?, ?, ?)
+             ON CONFLICT(pool_id, idx) DO UPDATE SET minute = excluded.minute, label = excluded.label, team_side = excluded.team_side, slot = excluded.slot`,
+            [poolId, nextIdx, gl.minute, gl.label, gl.side, slot]
+        );
+    }
+    const finalState = g.state === 'post';
+    const whistle = (g.whistleMinute != null) ? g.whistleMinute : (finalState ? 90 : null);
+    const live = JSON.stringify({ top: g.away.score, left: g.home.score, period: g.period, state: g.state, statusDetail: g.statusDetail, clock: g.clock || '', whistleMinute: whistle });
+    await dbRun('UPDATE pools SET live_state = ?, live_done = ? WHERE id = ?', [live, finalState ? 1 : 0, poolId]);
+}
+// Decide which number set a goal locks against. 'once' -> the single 'all' set.
+// 'per_goal' -> snapshot the live display as 'gN', then reshuffle the display for the next goal.
+async function lockGoalSlot(poolId, mode, idx, cols, rows) {
+    if (mode !== 'per_goal') return 'all';
+    const slot = 'g' + idx;
+    const pool = await dbGet('SELECT top_headers, left_headers FROM pools WHERE id = ?', [poolId]);
+    await dbRun(
+        `INSERT INTO grid_numbers (pool_id, slot, top_headers, left_headers) VALUES (?, ?, ?, ?)
+         ON CONFLICT(pool_id, slot) DO UPDATE SET top_headers = excluded.top_headers, left_headers = excluded.left_headers`,
+        [poolId, slot, pool.top_headers, pool.left_headers]
+    );
+    await dbRun('UPDATE pools SET top_headers = ?, left_headers = ?, numbers_drawn_at = ? WHERE id = ?',
+        [JSON.stringify(drawAxis(cols)), JSON.stringify(drawAxis(rows)), Date.now(), poolId]);
+    return slot;
+}
+
 async function pollLiveScores() {
     let pools;
     try {
-        pools = await dbAll("SELECT id, espn_league, espn_event_id, number_mode, locked, espn_start FROM pools WHERE score_source = 'live' AND espn_event_id IS NOT NULL AND espn_league IS NOT NULL AND (live_done IS NULL OR live_done = 0)");
+        pools = await dbAll("SELECT id, espn_league, espn_event_id, number_mode, locked, espn_start, scoring FROM pools WHERE score_source = 'live' AND espn_event_id IS NOT NULL AND espn_league IS NOT NULL AND (live_done IS NULL OR live_done = 0)");
     } catch (e) { return; }
     if (!pools.length) return;
     // Fetch each distinct game from ESPN once per tick, then apply to every board using it.
@@ -651,16 +821,18 @@ async function pollLiveScores() {
             if (!(key in cache)) cache[key] = await espnSummary(p.espn_league, p.espn_event_id);
             const g = cache[key];
             if (!g) continue;
-            await applyLiveScores(p.id, g);
+            await applyLiveScores(p.id, g, p.scoring);
             const mode = p.number_mode || 'once';
-            if (p.locked === 1 && mode !== 'once') await autoAdvanceForPeriod(p.id, mode, g.period);
+            if (p.locked === 1 && mode !== 'once' && p.scoring !== 'goal_minute') await autoAdvanceForPeriod(p.id, mode, g.period);
             bump(p.id);
         } catch (e) { cache[key] = null; /* skip */ }
     }
 }
 
 // --- Locking + number drawing (with per-period rotation) ---
-const SLOTS = { once: ['all'], per_quarter: ['q1', 'q2', 'q3', 'final'], per_half: ['h1', 'h2'] };
+// per_goal is a soccer/goal-minute rotation: a fresh draw locks in behind each goal.
+// Its slots are dynamic ('g1', 'g2', ...); 'g1' is the first set drawn when the board locks.
+const SLOTS = { once: ['all'], per_quarter: ['q1', 'q2', 'q3', 'final'], per_half: ['h1', 'h2'], per_goal: ['g1'] };
 function slotFor(mode, period) {
     if (mode === 'per_quarter') return period; // q1, q2, q3, final
     if (mode === 'per_half') return (period === 'q1' || period === 'q2') ? 'h1' : 'h2';
@@ -710,7 +882,7 @@ async function poolDims(poolId) {
 }
 async function resetHeaders(poolId) {
     const { cols, rows } = await poolDims(poolId);
-    await dbRun('UPDATE pools SET top_headers = ?, left_headers = ? WHERE id = ?',
+    await dbRun('UPDATE pools SET top_headers = ?, left_headers = ?, numbers_drawn_at = NULL WHERE id = ?',
         [JSON.stringify(placeholderHeaders(cols)), JSON.stringify(placeholderHeaders(rows)), poolId]);
 }
 // Draw (or re-draw) one slot's numbers and mirror them to the pool's current
@@ -724,7 +896,7 @@ async function setSlotNumbers(poolId, slot) {
          ON CONFLICT(pool_id, slot) DO UPDATE SET top_headers = excluded.top_headers, left_headers = excluded.left_headers`,
         [poolId, slot, top, left]
     );
-    await dbRun('UPDATE pools SET top_headers = ?, left_headers = ? WHERE id = ?', [top, left, poolId]);
+    await dbRun('UPDATE pools SET top_headers = ?, left_headers = ?, numbers_drawn_at = ? WHERE id = ?', [top, left, Date.now(), poolId]);
 }
 async function drawnSlots(poolId) {
     const rows = await dbAll('SELECT slot FROM grid_numbers WHERE pool_id = ?', [poolId]);
@@ -831,13 +1003,12 @@ app.use(express.static('public', { index: false }));
 function escapeAttr(s) {
     return String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 }
-let PLAYER_HTML = '';
-try { PLAYER_HTML = fs.readFileSync(path.join(__dirname, 'public', 'index.html'), 'utf8'); } catch (e) { /* fall back to sendFile */ }
-
 app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'public', 'dashboard.html')));
 // Inject per-board link-preview tags so a shared link shows the board name and a card image.
 app.get('/p/:id', ah(async (req, res) => {
-    if (!PLAYER_HTML) return res.sendFile(path.join(__dirname, 'public', 'index.html'));
+    let playerHtml;
+    try { playerHtml = fs.readFileSync(path.join(__dirname, 'public', 'index.html'), 'utf8'); }
+    catch (e) { return res.sendFile(path.join(__dirname, 'public', 'index.html')); }
     const pool = await dbGet('SELECT name, team_top, team_left, cost_per_square FROM pools WHERE id = ?', [req.params.id]);
     const proto = String(req.get('x-forwarded-proto') || req.protocol || 'http').split(',')[0].trim();
     const base = proto + '://' + (req.get('host') || ('localhost:' + PORT));
@@ -858,7 +1029,7 @@ app.get('/p/:id', ah(async (req, res) => {
         '<meta name="twitter:description" content="' + escapeAttr(desc) + '">',
         '<meta name="twitter:image" content="' + base + '/og.png">',
     ].join('\n    ');
-    res.set('Content-Type', 'text/html; charset=utf-8').send(PLAYER_HTML.replace('<!--OG-->', og));
+    res.set('Content-Type', 'text/html; charset=utf-8').set('Cache-Control', 'no-cache').send(playerHtml.replace('<!--OG-->', og));
 }));
 app.get('/p/:id/admin', (req, res) => res.sendFile(path.join(__dirname, 'public', 'admin.html')));
 
@@ -959,20 +1130,22 @@ app.post('/api/owner/pools', ownerAuth, ah(async (req, res) => {
     const id = await uniquePoolId();
     const adminToken = genToken();
     const gt = GRID_TYPES[req.body.gridType] || GRID_TYPES.std100;
-    const mode = SLOTS[req.body.numberMode] ? req.body.numberMode : 'once';
+    const scoring = req.body.scoring === 'goal_minute' ? 'goal_minute' : 'digits';
+    const validModes = scoring === 'goal_minute' ? ['once', 'per_goal'] : ['once', 'per_quarter', 'per_half'];
+    const mode = validModes.includes(req.body.numberMode) ? req.body.numberMode : 'once';
     const topPlaceholder = JSON.stringify(placeholderHeaders(gt.cols));
     const leftPlaceholder = JSON.stringify(placeholderHeaders(gt.rows));
     await dbRun(
         `INSERT INTO pools (id, admin_token, name, team_top, team_left, color_top, color_left, color_top2, color_left2,
-            cost_per_square, venmo_url, locked, number_mode, grid_cols, grid_rows, top_headers, left_headers)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?)`,
+            cost_per_square, venmo_url, locked, number_mode, grid_cols, grid_rows, scoring, top_headers, left_headers)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?)`,
         [
             id, adminToken, name,
             (req.body.teamTop || 'Top').slice(0, 30), (req.body.teamLeft || 'Left').slice(0, 30),
             req.body.colorTop || '#002244', req.body.colorLeft || '#4b92db',
             req.body.colorTop2 || null, req.body.colorLeft2 || null,
             String(req.body.cost ?? '0'), req.body.venmoUrl || null,
-            mode, gt.cols, gt.rows,
+            mode, gt.cols, gt.rows, scoring,
             topPlaceholder, leftPlaceholder,
         ]
     );
@@ -1082,6 +1255,7 @@ app.get('/api/pool/:id', ah(async (req, res) => {
     if (!slotsMap.all) slotsMap.all = { top: topHeaders, left: leftHeaders };
     const gridCols = pool.grid_cols || 10;
     const gridRows = pool.grid_rows || 10;
+    const scoring = pool.scoring || 'digits';
     const winners = computeWinners(squares, scores, mode, slotsMap, gridCols, gridRows);
     const slotOrder = SLOTS[mode] || SLOTS.once;
     let currentPeriod = null;
@@ -1095,7 +1269,7 @@ app.get('/api/pool/:id', ah(async (req, res) => {
     let liveTarget = null, liveWinner = null;
     // Only highlight the "currently winning" square while the game is in progress.
     // Once it is final, the gold winner styling takes over and the white outline drops.
-    if (live && live.state === 'in' && currentPeriod && slotsMap[currentPeriod]) {
+    if (scoring !== 'goal_minute' && live && live.state === 'in' && currentPeriod && slotsMap[currentPeriod]) {
         const dTop = lastDigit(String(live.top));
         const dLeft = lastDigit(String(live.left));
         const hdr = slotsMap[currentPeriod];
@@ -1112,7 +1286,33 @@ app.get('/api/pool/:id', ah(async (req, res) => {
         }
     }
 
+    // Goal-minute boards: resolve each goal's winning square, the 0-0 whistle
+    // fallback, and (while live) the square the current match minute points to.
+    let goalMinute = null;
+    if (scoring === 'goal_minute') {
+        const goalRows = await dbAll('SELECT idx, minute, label, team_side, slot FROM goals WHERE pool_id = ? ORDER BY idx', [pool.id]);
+        const goalWinners = computeGoalMinuteWinners(squares, goalRows, slotsMap, gridCols, gridRows);
+        const whistleMinute = (live && live.whistleMinute != null) ? live.whistleMinute : null;
+        const isFinal = !!(live && live.state === 'post');
+        let whistle = null;
+        if (isFinal && goalRows.length === 0 && whistleMinute != null) {
+            const res0 = minuteToWinner(squares, whistleMinute, slotsMap.all, gridCols, gridRows);
+            whistle = { minute: whistleMinute, target: res0.target, winner: res0.winner, rolledOver: res0.rolledOver };
+        }
+        goalMinute = { goals: goalWinners, whistle, whistleMinute, totalGoals: goalRows.length, isFinal };
+        // Live "if a goal happened now" highlight from the current match clock.
+        if (live && live.state === 'in') {
+            const nowMin = parseGoalMinute(live.clock || live.statusDetail);
+            if (nowMin != null) {
+                const res1 = minuteToWinner(squares, nowMin, slotsMap.all, gridCols, gridRows);
+                if (res1.target) { liveTarget = res1.target; if (res1.winner) liveWinner = { r: res1.winner.r, c: res1.winner.c }; }
+            }
+        }
+    }
+
     res.json({
+        scoring,
+        goalMinute,
         poolId: pool.id,
         name: pool.name,
         squares,
@@ -1124,6 +1324,7 @@ app.get('/api/pool/:id', ah(async (req, res) => {
         winners,
         currentPeriod,
         numberSets,
+        numbersDrawnAt: pool.numbers_drawn_at || null,
         annotations,
         notes: noteRows,
         live,
@@ -1131,6 +1332,8 @@ app.get('/api/pool/:id', ah(async (req, res) => {
         liveWinner,
         teamTop: pool.team_top || 'Top',
         teamLeft: pool.team_left || 'Left',
+        logoTop: pool.logo_top || '',
+        logoLeft: pool.logo_left || '',
         colorTop: pool.color_top || '#333',
         colorLeft: pool.color_left || '#333',
         colorTop2: pool.color_top2 || '',
@@ -1323,6 +1526,48 @@ app.post('/api/pool/:id/admin/number-mode', poolAdmin, ah(async (req, res) => {
     res.json({ success: true });
 }));
 
+// Switch a board between classic digits and soccer goal-minute. Resets numbers and
+// goals since the two formats don't share a grid meaning.
+app.post('/api/pool/:id/admin/format', poolAdmin, ah(async (req, res) => {
+    const scoring = req.body.scoring === 'goal_minute' ? 'goal_minute' : 'digits';
+    const mode = scoring === 'goal_minute'
+        ? (req.body.numberMode === 'per_goal' ? 'per_goal' : 'once')
+        : (['per_quarter', 'per_half'].includes(req.body.numberMode) ? req.body.numberMode : 'once');
+    await dbRun('UPDATE pools SET scoring = ?, number_mode = ? WHERE id = ?', [scoring, mode, req.params.id]);
+    await dbRun('DELETE FROM grid_numbers WHERE pool_id = ?', [req.params.id]);
+    await dbRun('DELETE FROM goals WHERE pool_id = ?', [req.params.id]);
+    await resetHeaders(req.params.id);
+    const pool = await dbGet('SELECT locked FROM pools WHERE id = ?', [req.params.id]);
+    if (pool && pool.locked === 1) await setSlotNumbers(req.params.id, SLOTS[mode][0]);
+    res.json({ success: true });
+}));
+
+// Manually add a goal (for boards not on ESPN, or to test before kickoff).
+// Minute accepts "63" or stoppage "90+9".
+app.post('/api/pool/:id/admin/goals', poolAdmin, ah(async (req, res) => {
+    const minute = parseGoalMinute(String(req.body.minute == null ? '' : req.body.minute));
+    if (minute == null) return res.status(400).json({ error: 'Enter a minute, e.g. 63 or 90+9.' });
+    const label = (String(req.body.label || '').trim().slice(0, 40)) || 'Goal';
+    const side = req.body.side === 'top' ? 'top' : (req.body.side === 'left' ? 'left' : '');
+    const mode = await poolMode(req.params.id);
+    const { cols, rows } = await poolDims(req.params.id);
+    await drawNumbersIfNeeded(req.params.id);
+    const existing = await dbAll('SELECT idx FROM goals WHERE pool_id = ? ORDER BY idx', [req.params.id]);
+    const nextIdx = existing.reduce((m, r) => Math.max(m, r.idx), 0) + 1;
+    const slot = await lockGoalSlot(req.params.id, mode, nextIdx, cols, rows);
+    await dbRun('INSERT INTO goals (pool_id, idx, minute, label, team_side, slot) VALUES (?, ?, ?, ?, ?, ?)',
+        [req.params.id, nextIdx, minute, label, side, slot]);
+    bump(req.params.id);
+    res.json({ success: true });
+}));
+
+app.post('/api/pool/:id/admin/goals/clear', poolAdmin, ah(async (req, res) => {
+    await dbRun('DELETE FROM goals WHERE pool_id = ?', [req.params.id]);
+    await dbRun("DELETE FROM grid_numbers WHERE pool_id = ? AND slot LIKE 'g%'", [req.params.id]);
+    bump(req.params.id);
+    res.json({ success: true });
+}));
+
 app.post('/api/pool/:id/admin/clear-headers', poolAdmin, ah(async (req, res) => {
     await dbRun('DELETE FROM grid_numbers WHERE pool_id = ?', [req.params.id]);
     await resetHeaders(req.params.id);
@@ -1340,8 +1585,9 @@ app.post('/api/pool/:id/admin/reset-board', poolAdmin, ah(async (req, res) => {
 
 app.post('/api/pool/:id/admin/teams', poolAdmin, ah(async (req, res) => {
     const { teamTop, teamLeft, colorTop, colorLeft, colorTop2, colorLeft2 } = req.body;
+    // A manual team edit overrides ESPN, so drop the linked logos to avoid showing stale ones.
     await dbRun(
-        'UPDATE pools SET team_top = ?, team_left = ?, color_top = ?, color_left = ?, color_top2 = ?, color_left2 = ? WHERE id = ?',
+        'UPDATE pools SET team_top = ?, team_left = ?, color_top = ?, color_left = ?, color_top2 = ?, color_left2 = ?, logo_top = NULL, logo_left = NULL WHERE id = ?',
         [teamTop, teamLeft, colorTop, colorLeft, colorTop2 || null, colorLeft2 || null, req.params.id]
     );
     res.json({ success: true });
@@ -1375,6 +1621,30 @@ app.post('/api/pool/:id/admin/scores', poolAdmin, ah(async (req, res) => {
     }
     const mode = await poolMode(req.params.id);
     if (mode !== 'once') await advanceFromScores(req.params.id, mode);
+    res.json({ success: true });
+}));
+
+// Manually drive the on-board live scoreboard and "winning now" highlight (for boards
+// not pulling from ESPN). Mirrors what the ESPN poll writes into live_state.
+app.post('/api/pool/:id/admin/live-score', poolAdmin, ah(async (req, res) => {
+    if (req.body.clear) {
+        await dbRun('UPDATE pools SET live_state = NULL WHERE id = ?', [req.params.id]);
+        return res.json({ success: true });
+    }
+    const top = String(req.body.top == null ? '' : req.body.top).trim().slice(0, 6);
+    const left = String(req.body.left == null ? '' : req.body.left).trim().slice(0, 6);
+    const state = req.body.state === 'post' ? 'post' : 'in';
+    const period = ['q1', 'q2', 'q3', 'final'].includes(req.body.period) ? req.body.period : 'q1';
+    const label = { q1: 'Q1', q2: 'Q2', q3: 'Q3', final: 'Final' }[period];
+    // Soccer boards can carry a match clock (for the "if a goal happened now" highlight)
+    // and a final-whistle minute (for the 0-0 fallback winner).
+    const clock = String(req.body.clock == null ? '' : req.body.clock).trim().slice(0, 8);
+    const whistleMinute = req.body.whistleMinute != null ? parseGoalMinute(String(req.body.whistleMinute)) : null;
+    const statusDetail = state === 'post' ? 'Final' : (clock ? clock : (label + ' in progress'));
+    const payload = { top, left, period, state, statusDetail, clock };
+    if (whistleMinute != null) payload.whistleMinute = whistleMinute;
+    const live = JSON.stringify(payload);
+    await dbRun('UPDATE pools SET live_state = ? WHERE id = ?', [live, req.params.id]);
     res.json({ success: true });
 }));
 
@@ -1453,7 +1723,7 @@ app.post('/api/pool/:id/admin/score-source', poolAdmin, ah(async (req, res) => {
 }));
 
 app.post('/api/pool/:id/admin/unlink-game', poolAdmin, ah(async (req, res) => {
-    await dbRun("UPDATE pools SET espn_league = NULL, espn_event_id = NULL, espn_start = NULL, score_source = 'manual' WHERE id = ?", [req.params.id]);
+    await dbRun("UPDATE pools SET espn_league = NULL, espn_event_id = NULL, espn_start = NULL, score_source = 'manual', logo_top = NULL, logo_left = NULL WHERE id = ?", [req.params.id]);
     res.json({ success: true });
 }));
 
