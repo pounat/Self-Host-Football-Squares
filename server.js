@@ -148,6 +148,10 @@ async function migrate() {
         await migrateToV19();
         await dbRun('PRAGMA user_version = 19');
     }
+    if (user_version < 20) {
+        await migrateToV20();
+        await dbRun('PRAGMA user_version = 20');
+    }
 }
 
 async function migrateToV1() {
@@ -389,6 +393,14 @@ async function migrateToV19() {
             UNIQUE(pool_id, idx)
         );
     `);
+}
+
+// A "removed" flag so a VAR-disallowed goal can be taken off the board. It's a soft
+// delete: the row stays (so the live poll's seen-set won't re-add it from the feed),
+// but it no longer wins or counts toward the pot split.
+async function migrateToV20() {
+    const cols = await dbAll('PRAGMA table_info(goals)');
+    if (!cols.some((c) => c.name === 'removed')) await dbExec('ALTER TABLE goals ADD COLUMN removed INTEGER DEFAULT 0');
 }
 
 async function logActivity(poolId, text) {
@@ -1321,7 +1333,9 @@ app.get('/api/pool/:id', ah(async (req, res) => {
     // fallback, and (while live) the square the current match minute points to.
     let goalMinute = null;
     if (scoring === 'goal_minute') {
-        const goalRows = await dbAll('SELECT idx, minute, label, team_side, slot FROM goals WHERE pool_id = ? ORDER BY idx', [pool.id]);
+        const allGoalRows = await dbAll('SELECT idx, minute, label, team_side, slot, removed FROM goals WHERE pool_id = ? ORDER BY idx', [pool.id]);
+        const goalRows = allGoalRows.filter((g) => !g.removed);
+        const removedRows = allGoalRows.filter((g) => g.removed).map((g) => ({ idx: g.idx, minute: g.minute, label: g.label, side: g.team_side }));
         const goalWinners = computeGoalMinuteWinners(squares, goalRows, slotsMap, gridCols, gridRows);
         const whistleMinute = (live && live.whistleMinute != null) ? live.whistleMinute : null;
         const isFinal = !!(live && live.state === 'post');
@@ -1330,7 +1344,7 @@ app.get('/api/pool/:id', ah(async (req, res) => {
             const res0 = minuteToWinner(squares, whistleMinute, slotsMap.all, gridCols, gridRows);
             whistle = { minute: whistleMinute, target: res0.target, winner: res0.winner, rolledOver: res0.rolledOver };
         }
-        goalMinute = { goals: goalWinners, whistle, whistleMinute, totalGoals: goalRows.length, isFinal };
+        goalMinute = { goals: goalWinners, removed: removedRows, whistle, whistleMinute, totalGoals: goalRows.length, isFinal };
         // Live "if a goal happened now" highlight from the current match clock.
         if (live && live.state === 'in') {
             const nowMin = parseGoalMinute(live.clock || live.statusDetail);
@@ -1595,6 +1609,14 @@ app.post('/api/pool/:id/admin/goals', poolAdmin, ah(async (req, res) => {
 app.post('/api/pool/:id/admin/goals/clear', poolAdmin, ah(async (req, res) => {
     await dbRun('DELETE FROM goals WHERE pool_id = ?', [req.params.id]);
     await dbRun("DELETE FROM grid_numbers WHERE pool_id = ? AND slot LIKE 'g%'", [req.params.id]);
+    bump(req.params.id);
+    res.json({ success: true });
+}));
+
+// Disallow a goal (VAR) or restore one. Soft delete so the live poll won't re-add it.
+app.post('/api/pool/:id/admin/goals/:idx/remove', poolAdmin, ah(async (req, res) => {
+    const removed = req.body.restore ? 0 : 1;
+    await dbRun('UPDATE goals SET removed = ? WHERE pool_id = ? AND idx = ?', [removed, req.params.id, Number(req.params.idx)]);
     bump(req.params.id);
     res.json({ success: true });
 }));

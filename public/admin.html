@@ -1114,27 +1114,35 @@
             if (!wrap) return;
             const gm = data.goalMinute || {};
             const goals = gm.goals || [];
-            if (!goals.length && !(gm.whistle && gm.whistle.winner)) {
+            const removed = gm.removed || [];
+            if (!goals.length && !removed.length && !(gm.whistle && gm.whistle.winner)) {
                 wrap.innerHTML = `<div style="color:#666; font-size:0.85rem;">No goals yet. The first goal pays the square for its minute.</div>`;
                 return;
             }
             const teamOf = (side) => side === 'left' ? { name: data.teamLeft, color: data.colorLeft } : side === 'top' ? { name: data.teamTop, color: data.colorTop } : null;
+            const teamHtml = (side) => { const t = teamOf(side); return t ? `<span style="display:inline-block; width:9px; height:9px; border-radius:50%; background:${t.color}; box-shadow:0 0 0 1px rgba(255,255,255,0.3); margin:0 4px 0 2px; vertical-align:middle;"></span><strong>${escapeHtml(t.name)}</strong> ` : ''; };
             let html = goals.map((g) => {
                 const sq = g.winner ? escapeHtml(g.winner.name) : (g.target ? 'empty → rolled over' : 'numbers not drawn');
                 const roll = g.rolledOver ? ' <span style="color:#888;">(rollover)</span>' : '';
-                const t = teamOf(g.side);
-                const teamHtml = t ? `<span style="display:inline-block; width:9px; height:9px; border-radius:50%; background:${t.color}; box-shadow:0 0 0 1px rgba(255,255,255,0.3); margin:0 4px 0 2px; vertical-align:middle;"></span><strong>${escapeHtml(t.name)}</strong> ` : '';
-                return `<div style="display:flex; justify-content:space-between; gap:8px; padding:4px 0; border-bottom:1px solid #2a2a2a; font-size:0.86rem;">
-                    <span><span style="color:#4ade80; font-weight:700;">${g.minute}'</span> ${teamHtml}${escapeHtml(g.label || 'Goal')}</span>
-                    <span style="color:#ffd700; text-align:right;">${sq}${roll}</span></div>`;
+                return `<div style="display:flex; justify-content:space-between; align-items:center; gap:8px; padding:4px 0; border-bottom:1px solid #2a2a2a; font-size:0.86rem;">
+                    <span><span style="color:#4ade80; font-weight:700;">${g.minute}'</span> ${teamHtml(g.side)}${escapeHtml(g.label || 'Goal')}</span>
+                    <span style="display:flex; align-items:center; gap:8px;"><span style="color:#ffd700;">${sq}${roll}</span><button class="small" title="Disallow (VAR)" onclick="removeGoal(${g.idx})" style="padding:1px 7px; line-height:1.4;">✕</button></span></div>`;
             }).join('');
             if (gm.whistle && gm.whistle.winner) {
-                html += `<div style="display:flex; justify-content:space-between; gap:8px; padding:6px 0 0; font-size:0.86rem;">
+                html += `<div style="display:flex; justify-content:space-between; gap:8px; padding:6px 0; font-size:0.86rem;">
                     <span><span style="color:#fbbf24; font-weight:700;">FT ${gm.whistle.minute}'</span> 0-0 whistle</span>
                     <span style="color:#ffd700;">${escapeHtml(gm.whistle.winner.name)}</span></div>`;
             }
+            if (removed.length) {
+                html += `<div style="margin-top:8px; font-size:0.76rem; color:#888;">Disallowed (VAR):</div>`;
+                html += removed.map((g) => `<div style="display:flex; justify-content:space-between; align-items:center; gap:8px; padding:3px 0; font-size:0.82rem; color:#777;">
+                    <span style="text-decoration:line-through;">${g.minute}' ${teamHtml(g.side)}${escapeHtml(g.label || 'Goal')}</span>
+                    <button class="small" onclick="restoreGoal(${g.idx})" style="padding:1px 7px; line-height:1.4;">restore</button></div>`).join('');
+            }
             wrap.innerHTML = html;
         }
+        function removeGoal(idx) { apiCall('goals/' + idx + '/remove', {}); }
+        function restoreGoal(idx) { apiCall('goals/' + idx + '/remove', { restore: true }); }
         async function advanceNumbers() {
             await apiCall('advance-numbers', {});
         }
