@@ -621,12 +621,22 @@ async function espnSoccerSchedule(league, teamId) {
     }));
 }
 
-// "63'" -> 63 ; "90'+9'" -> 99. Regulation + stoppage summed, capped at 99.
+// Map a match clock to a 0-99 minute square. A plain minute uses its own digits
+// ("63'" -> 63). In stoppage time we keep the tens digit of the half's clock and
+// take the LAST digit of the added minutes as the ones, so stoppage goals stay in
+// their half's row instead of spilling forward: 45+6 -> (4,6), 45+13 -> (4,3),
+// 90+9 -> (9,9), 90+12 -> (9,2). Everything is capped at 99.
 function parseGoalMinute(clockDisp) {
     if (clockDisp == null) return null;
-    const nums = String(clockDisp).replace(/[^0-9+]/g, '').split('+').map((s) => parseInt(s, 10)).filter((n) => !Number.isNaN(n));
-    if (!nums.length) return null;
-    return Math.max(0, Math.min(99, nums.reduce((a, b) => a + b, 0)));
+    const parts = String(clockDisp).replace(/[^0-9+]/g, '').split('+').map((s) => parseInt(s, 10));
+    const base = parts[0];
+    if (Number.isNaN(base)) return null;
+    const extra = (parts.length > 1 && !Number.isNaN(parts[1])) ? parts[1] : 0;
+    if (extra > 0) {
+        const tens = Math.floor(base / 10);
+        return Math.min(99, tens * 10 + (extra % 10));
+    }
+    return Math.max(0, Math.min(99, base));
 }
 // Pull scoring events (goals, penalties, own goals) with their minute, plus the
 // full-time whistle minute, from an ESPN soccer summary's keyEvents feed.

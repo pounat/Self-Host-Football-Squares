@@ -80,6 +80,16 @@
         .goal-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 5px; vertical-align: middle; box-shadow: 0 0 0 1px rgba(255,255,255,0.3); }
         .goal-team { font-weight: 800; }
 
+        .gm-matchup { display: none; text-align: center; margin: 4px auto 14px; }
+        .gm-matchup .mu-teams { display: flex; align-items: flex-end; justify-content: center; gap: 16px; flex-wrap: wrap; }
+        .gm-matchup .mu-team { display: inline-flex; align-items: center; gap: 9px; font-size: 1.15rem; font-weight: 800; letter-spacing: 0.02em; padding-bottom: 5px; border-bottom: 3px solid transparent; }
+        .gm-matchup .mu-flag { height: 2em; width: auto; border-radius: 3px; box-shadow: 0 1px 3px rgba(0,0,0,0.55); }
+        .gm-matchup .mu-chip { width: 22px; height: 15px; border-radius: 3px; display: inline-block; box-shadow: 0 0 0 1px rgba(255,255,255,0.3); }
+        .gm-matchup .mu-v { color: #888; font-weight: 700; font-size: 0.9rem; padding-bottom: 8px; }
+        .gm-matchup .mu-score { margin-top: 9px; font-size: 1.25rem; font-weight: 800; }
+        .gm-matchup .mu-dash { color: #888; margin: 0 5px; }
+        .gm-matchup .mu-min { color: #4ade80; font-weight: 700; font-size: 0.8rem; margin-left: 9px; vertical-align: middle; }
+
         .grid-container {
             max-width: 100%; margin: 0 auto; padding: 5px;
             overflow-x: auto; overflow-y: visible;
@@ -301,6 +311,8 @@
 
     <div id="notes-wrap"></div>
 
+    <div id="gm-matchup" class="gm-matchup"></div>
+
     <div class="counter-pill"><span id="counter">Loading...</span></div>
 
     <div id="payout-card" class="payout-card" style="display:none;"></div>
@@ -503,6 +515,7 @@
 
             lastData = data;
             updateNumbersRule(data);
+            updateGmMatchup(data);
             updateGmRules(data);
             updatePeriodNote(data);
             updateLiveScore(data);
@@ -559,15 +572,13 @@
             const gm = data.scoring === 'goal_minute';
             const grad = (c1, c2) => `linear-gradient(135deg, ${c1 || '#333'}, ${c2 || c1 || '#333'})`;
             const logoImg = (url) => url ? `<img class="team-logo" src="${escapeHtml(url)}" alt="" onerror="this.remove()">` : '';
-            // Keep the team colours, logos and names on the axes even for goal-minute
-            // boards; a small caption notes each axis is a digit of the goal's minute.
-            const topRole = gm ? `<span class="axis-role">min &middot; ones</span>` : '';
-            const leftRole = gm ? `<span class="axis-role">min &middot; tens</span>` : '';
-            const topBar = createDiv('cell team-top-bar', data.teamTop, { backgroundImage: grad(data.colorTop, data.colorTop2), gridRow: '1', gridColumn: `${base + 1} / span ${cols}` });
-            if (gm || data.logoTop) topBar.innerHTML = logoImg(data.logoTop) + escapeHtml(data.teamTop) + topRole;
+            // On a goal-minute board the axes are the minute's digits, not the teams,
+            // so they get neutral "MINUTE" labels. Team identity lives in the scoreboard.
+            const topBar = createDiv('cell team-top-bar', gm ? 'MINUTE · ONES' : data.teamTop, { backgroundImage: gm ? grad('#14532d', '#166534') : grad(data.colorTop, data.colorTop2), gridRow: '1', gridColumn: `${base + 1} / span ${cols}` });
+            if (!gm && data.logoTop) topBar.innerHTML = logoImg(data.logoTop) + escapeHtml(data.teamTop);
             grid.appendChild(topBar);
-            const leftBar = createDiv('cell team-left-bar', data.teamLeft, { backgroundImage: grad(data.colorLeft, data.colorLeft2), gridColumn: '1', gridRow: `${base + 1} / span ${rows}` });
-            if (gm || data.logoLeft) leftBar.innerHTML = logoImg(data.logoLeft) + escapeHtml(data.teamLeft) + leftRole;
+            const leftBar = createDiv('cell team-left-bar', gm ? 'MINUTE · TENS' : data.teamLeft, { backgroundImage: gm ? grad('#14532d', '#166534') : grad(data.colorLeft, data.colorLeft2), gridColumn: '1', gridRow: `${base + 1} / span ${rows}` });
+            if (!gm && data.logoLeft) leftBar.innerHTML = logoImg(data.logoLeft) + escapeHtml(data.teamLeft);
             grid.appendChild(leftBar);
 
             for (let c = 0; c < cols; c++) {
@@ -794,6 +805,27 @@
             container.innerHTML = html;
         }
 
+        function updateGmMatchup(data) {
+            const el = document.getElementById('gm-matchup');
+            if (!el) return;
+            if (data.scoring !== 'goal_minute') { el.style.display = 'none'; return; }
+            const lv = data.live;
+            const hasScore = lv && (lv.state === 'in' || lv.state === 'post');
+            const flag = (url, color) => url
+                ? `<img class="mu-flag" src="${escapeHtml(url)}" alt="" onerror="this.style.display='none'">`
+                : `<span class="mu-chip" style="background:${color || '#666'}"></span>`;
+            // Home (left axis) first, away (top axis) second — e.g. "United States v Belgium".
+            el.style.display = 'block';
+            let html = `<div class="mu-teams">
+                <span class="mu-team" style="border-color:${data.colorLeft || '#666'}">${flag(data.logoLeft, data.colorLeft)}<span>${escapeHtml(data.teamLeft)}</span></span>
+                <span class="mu-v">v</span>
+                <span class="mu-team" style="border-color:${data.colorTop || '#666'}"><span>${escapeHtml(data.teamTop)}</span>${flag(data.logoTop, data.colorTop)}</span>
+            </div>`;
+            if (hasScore) {
+                html += `<div class="mu-score">${escapeHtml(String(lv.left))}<span class="mu-dash">–</span>${escapeHtml(String(lv.top))}${lv.statusDetail ? `<span class="mu-min">${escapeHtml(lv.statusDetail)}</span>` : ''}</div>`;
+            }
+            el.innerHTML = html;
+        }
         function updateGmRules(data) {
             const el = document.getElementById('gm-rules');
             if (!el) return;
@@ -804,8 +836,8 @@
             el.style.display = 'block';
             el.innerHTML = `<h4>⚽ Goal-Minute Squares</h4><ul>
                 <li>Each goal pays the square for the <strong>minute</strong> it was scored — tens down the side, ones across the top.</li>
-                <li>Added time counts as its real minute: a goal at <strong>90+9 = 99</strong> → square (9, 9).</li>
-                <li>The pot splits <strong>evenly across every goal</strong> (penalties &amp; own goals count).</li>
+                <li>In stoppage, the second number is the <strong>added minute</strong>: 45+6 → square (4,6), 90+9 → (9,9), 90+12 → (9,2).</li>
+                <li>The pot splits <strong>evenly across every goal</strong> — penalties, own goals and extra-time goals all count. Penalty shootouts don't.</li>
                 <li><strong>0-0?</strong> The final-whistle minute wins the whole pot.</li>
                 ${rotate}</ul>`;
         }
@@ -883,6 +915,9 @@
             const el = document.getElementById('live-bar');
             if (!el) return;
             const lv = data.live;
+            // Goal-minute boards show the score in the matchup banner, so hide this pill.
+            if (data.scoring === 'goal_minute') { el.style.display = 'none'; el.className = 'live-bar'; return; }
+            el.className = 'live-bar';
             if (lv && (lv.state === 'in' || lv.state === 'post')) {
                 el.style.display = 'block';
                 el.innerHTML = `<strong>${escapeHtml(data.teamTop)}</strong> ${lv.top} &nbsp;&middot;&nbsp; <strong>${escapeHtml(data.teamLeft)}</strong> ${lv.left} <span style="color:#888; font-weight:400;">${escapeHtml(lv.statusDetail || '')}</span>`;
