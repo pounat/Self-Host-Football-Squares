@@ -604,6 +604,23 @@ async function espnSchedule(league, teamId) {
     return events.map(parseScheduleGame);
 }
 
+// Soccer team schedules from ESPN only list the group/league stage — knockout
+// fixtures aren't attached to a national team's schedule feed. So for soccer we
+// scan the scoreboard across a date window and keep the games this team is in,
+// which also surfaces cup and knockout matches.
+async function espnSoccerSchedule(league, teamId) {
+    const now = Date.now();
+    const fmt = (ms) => { const d = new Date(ms); return '' + d.getUTCFullYear() + String(d.getUTCMonth() + 1).padStart(2, '0') + String(d.getUTCDate()).padStart(2, '0'); };
+    const range = fmt(now - 5 * 86400000) + '-' + fmt(now + 45 * 86400000);
+    const events = (await espnScoreboard(league, range))
+        .filter((e) => String(e.home.id) === String(teamId) || String(e.away.id) === String(teamId));
+    return events.map((e) => ({
+        espnId: e.espnId,
+        label: (e.away.abbrev || e.away.name) + ' @ ' + (e.home.abbrev || e.home.name),
+        date: e.date, status: e.statusDetail, state: e.state,
+    }));
+}
+
 // "63'" -> 63 ; "90'+9'" -> 99. Regulation + stoppage summed, capped at 99.
 function parseGoalMinute(clockDisp) {
     if (clockDisp == null) return null;
@@ -698,7 +715,7 @@ const espnSearch = ah(async (req, res) => {
             const teams = await espnTeams(league);
             const t = matchTeam(teams, team);
             if (!t) return res.json({ games: [], note: 'No team matched "' + team + '"' });
-            games = await espnSchedule(league, t.id);
+            games = isSoccerLeague(league) ? await espnSoccerSchedule(league, t.id) : await espnSchedule(league, t.id);
         } else {
             games = (await espnScoreboard(league, dates)).map((g) => ({
                 espnId: g.espnId,
@@ -766,11 +783,15 @@ async function applyLiveScores(poolId, g, scoring) {
 async function applyGoalMinuteLive(poolId, g) {
     const mode = await poolMode(poolId);
     const { cols, rows } = await poolDims(poolId);
-    await drawNumbersIfNeeded(poolId); // ensure an initial set exists to lock goals against
+    const pool = await dbGet('SELECT locked FROM pools WHERE id = ?', [poolId]);
+    const goals = g.goals || [];
+    // Only draw numbers once the board is locked (kickoff) or a goal has actually
+    // happened — never on a pre-game link, so the reveal waits for kickoff.
+    if ((pool && pool.locked === 1) || goals.length) await drawNumbersIfNeeded(poolId);
     const existing = await dbAll('SELECT idx, minute, label FROM goals WHERE pool_id = ? ORDER BY idx', [poolId]);
     const seen = new Set(existing.map((r) => r.minute + '|' + r.label));
     let nextIdx = existing.reduce((m, r) => Math.max(m, r.idx), 0);
-    for (const gl of (g.goals || [])) {
+    for (const gl of goals) {
         const sig = gl.minute + '|' + gl.label;
         if (seen.has(sig)) continue;
         seen.add(sig);

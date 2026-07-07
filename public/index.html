@@ -77,6 +77,8 @@
         .gm-rules ul { margin: 0; padding-left: 18px; }
         .gm-rules li { color: #cfe9d8; font-size: 0.82rem; margin: 3px 0; }
         .gm-rules li strong { color: #fff; }
+        .goal-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 5px; vertical-align: middle; box-shadow: 0 0 0 1px rgba(255,255,255,0.3); }
+        .goal-team { font-weight: 800; }
 
         .grid-container {
             max-width: 100%; margin: 0 auto; padding: 5px;
@@ -137,6 +139,8 @@
         @keyframes numPop { 0% { transform: scale(1.7); } 55% { transform: scale(0.88); } 100% { transform: scale(1); } }
         .header-top.rolling, .header-left.rolling { color: #5b9bff; opacity: 0.85; }
         .header-top.num-pop, .header-left.num-pop { animation: numPop 0.5s ease-out; color: #fff; }
+        .axis-role { font-size: 0.6rem; font-weight: 700; opacity: 0.8; margin-left: 7px; letter-spacing: 0.02em; text-transform: uppercase; }
+        .team-left-bar .axis-role { margin-left: 0; margin-top: 7px; }
         .team-logo { height: 1.3em; width: auto; flex-shrink: 0; filter: drop-shadow(0 1px 2px rgba(0,0,0,0.6)); }
         .team-top-bar .team-logo { margin-right: 8px; }
         .team-left-bar .team-logo { transform: rotate(180deg); margin-bottom: 8px; }
@@ -555,14 +559,15 @@
             const gm = data.scoring === 'goal_minute';
             const grad = (c1, c2) => `linear-gradient(135deg, ${c1 || '#333'}, ${c2 || c1 || '#333'})`;
             const logoImg = (url) => url ? `<img class="team-logo" src="${escapeHtml(url)}" alt="" onerror="this.remove()">` : '';
-            // On a goal-minute board the axes are the minute's digits, not the teams.
-            const topLabel = gm ? 'GOAL MINUTE · ones' : data.teamTop;
-            const leftLabel = gm ? 'tens' : data.teamLeft;
-            const topBar = createDiv('cell team-top-bar', topLabel, { backgroundImage: gm ? grad('#166534', '#22c55e') : grad(data.colorTop, data.colorTop2), gridRow: '1', gridColumn: `${base + 1} / span ${cols}` });
-            if (!gm && data.logoTop) topBar.innerHTML = logoImg(data.logoTop) + escapeHtml(data.teamTop);
+            // Keep the team colours, logos and names on the axes even for goal-minute
+            // boards; a small caption notes each axis is a digit of the goal's minute.
+            const topRole = gm ? `<span class="axis-role">min &middot; ones</span>` : '';
+            const leftRole = gm ? `<span class="axis-role">min &middot; tens</span>` : '';
+            const topBar = createDiv('cell team-top-bar', data.teamTop, { backgroundImage: grad(data.colorTop, data.colorTop2), gridRow: '1', gridColumn: `${base + 1} / span ${cols}` });
+            if (gm || data.logoTop) topBar.innerHTML = logoImg(data.logoTop) + escapeHtml(data.teamTop) + topRole;
             grid.appendChild(topBar);
-            const leftBar = createDiv('cell team-left-bar', leftLabel, { backgroundImage: gm ? grad('#166534', '#22c55e') : grad(data.colorLeft, data.colorLeft2), gridColumn: '1', gridRow: `${base + 1} / span ${rows}` });
-            if (!gm && data.logoLeft) leftBar.innerHTML = logoImg(data.logoLeft) + escapeHtml(data.teamLeft);
+            const leftBar = createDiv('cell team-left-bar', data.teamLeft, { backgroundImage: grad(data.colorLeft, data.colorLeft2), gridColumn: '1', gridRow: `${base + 1} / span ${rows}` });
+            if (gm || data.logoLeft) leftBar.innerHTML = logoImg(data.logoLeft) + escapeHtml(data.teamLeft) + leftRole;
             grid.appendChild(leftBar);
 
             for (let c = 0; c < cols; c++) {
@@ -757,6 +762,11 @@
             });
         }
 
+        function teamOfSide(data, side) {
+            if (side === 'left') return { name: data.teamLeft, color: data.colorLeft };
+            if (side === 'top') return { name: data.teamTop, color: data.colorTop };
+            return null;
+        }
         function renderGoalLog(data, container) {
             const gm = data.goalMinute || {};
             const goals = gm.goals || [];
@@ -773,7 +783,11 @@
                 container.innerHTML = `<div class="result-card"><div style="color:#aaa; font-size:0.9rem;">${gm.isFinal ? 'Final — no goals recorded.' : 'No goals yet. The first goal pays the square for its minute.'}</div></div>`;
                 return;
             }
-            let html = goals.map(g => card(g.minute + "'", '#166534', escapeHtml(g.label || 'Goal'), g.winner, g.rolledOver)).join('');
+            let html = goals.map(g => {
+                const t = teamOfSide(data, g.side);
+                const teamHtml = t ? `<span class="goal-dot" style="background:${t.color}"></span><span class="goal-team">${escapeHtml(t.name)}</span> ` : '';
+                return card(g.minute + "'", t ? t.color : '#166534', teamHtml + escapeHtml(g.label || 'Goal'), g.winner, g.rolledOver);
+            }).join('');
             if (gm.whistle && gm.whistle.winner) {
                 html += card('FT ' + gm.whistle.minute + "'", '#b45309', '0-0 — final whistle', gm.whistle.winner, gm.whistle.rolledOver);
             }
