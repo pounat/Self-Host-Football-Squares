@@ -375,17 +375,17 @@
 
     <div id="rules-modal" class="modal-overlay" onclick="if(event.target===this) closeRules()">
         <div class="modal-card" style="max-width:420px;">
-            <div class="modal-title">How It Works</div>
+            <div class="modal-title" id="rules-title">How It Works</div>
             <div class="modal-body">
                 <ul class="rules-list">
                     <li><strong>Cost:</strong> <span id="price-display">...</span> per square.</li>
-                    <li><strong>Winning:</strong> Q1, Q2, Q3, and the final score of the game, based on the last digit of each team's score.</li>
+                    <li><strong>Winning:</strong> <span id="winning-rule">Q1, Q2, Q3, and the final score of the game, based on the last digit of each team's score.</span></li>
                     <li><strong>Rollover Rule:</strong> If the winning square is empty, the winner is the closest filled square moving to the right (like reading).</li>
-                    <li><strong>Payouts:</strong> <span id="payout-display">...</span> each for Q1, Q2, Q3, and the final score.</li>
+                    <li><strong>Payouts:</strong> <span id="payout-display">...</span><span id="payout-rule"> each for Q1, Q2, Q3, and the final score.</span></li>
                     <li><strong>Numbers:</strong> <span id="numbers-rule">Randomly generated (0-9) once the board is locked.</span></li>
                     <li><strong>Colors:</strong> claimed squares show blue, turning green once paid.</li>
                 </ul>
-                <p style="font-size:0.82rem; color:#888; border-top:1px dashed #444; padding-top:10px; margin-top:4px;">💡 Across NFL history the last digits <strong>0, 7, 3, 4</strong> win most and <strong>2, 5, 9</strong> least. Numbers are drawn only after the board locks.</p>
+                <p id="rules-extra" style="font-size:0.82rem; color:#888; border-top:1px dashed #444; padding-top:10px; margin-top:4px;">💡 Across NFL history the last digits <strong>0, 7, 3, 4</strong> win most and <strong>2, 5, 9</strong> least. Numbers are drawn only after the board locks.</p>
                 <div class="venmo-area" id="venmo-area" style="display:none;">
                     <span style="font-size: 0.85rem; color:#888;">Cash accepted • Venmo preferred</span><br>
                     <a href="#" target="_blank" class="venmo-btn" id="venmo-btn">Pay on Venmo</a>
@@ -517,6 +517,7 @@
             updateNumbersRule(data);
             updateGmMatchup(data);
             updateGmRules(data);
+            updateRulesModal(data);
             updatePeriodNote(data);
             updateLiveScore(data);
             updateCountdown();
@@ -840,6 +841,35 @@
                 <li>The pot splits <strong>evenly across every goal</strong> — penalties, own goals and extra-time goals all count. Penalty shootouts don't.</li>
                 <li><strong>0-0?</strong> The final-whistle minute wins the whole pot.</li>
                 ${rotate}</ul>`;
+        }
+
+        function updateRulesModal(data) {
+            const gm = data.scoring === 'goal_minute';
+            const title = document.getElementById('rules-title');
+            const winning = document.getElementById('winning-rule');
+            const payout = document.getElementById('payout-rule');
+            const extra = document.getElementById('rules-extra');
+            if (!title || !winning || !payout || !extra) return;
+
+            if (gm) {
+                const goals = (data.goalMinute && data.goalMinute.totalGoals) || 0;
+                title.innerText = 'How Goal-Minute Squares Work';
+                winning.innerText = 'Every goal pays the square matching the minute it was scored — tens down the side and ones across the top.';
+                payout.innerText = goals > 0
+                    ? ` per goal so far; the amount updates if more goals are scored.`
+                    : ' splits evenly across every goal scored; a 0-0 pays the final-whistle minute.';
+                extra.innerHTML = `<strong>Stoppage time:</strong> the first number stays with the half and the second uses the added minute's last digit — 45+6 → (4,6), 90+9 → (9,9), and 90+12 → (9,2).<br><br>
+                    <strong>What counts:</strong> penalties, own goals, and extra-time goals. Penalty-shootout kicks do not count.<br><br>
+                    <strong>0-0:</strong> the final-whistle minute wins the whole pot.`;
+                return;
+            }
+
+            title.innerText = 'How It Works';
+            winning.innerText = "Q1, Q2, Q3, and the final score of the game, based on the last digit of each team's score.";
+            payout.innerText = ' each for Q1, Q2, Q3, and the final score.';
+            extra.innerHTML = (data.espnLeague === 'nfl' || data.espnLeague === 'ncaaf')
+                ? '💡 Across NFL history the last digits <strong>0, 7, 3, 4</strong> win most and <strong>2, 5, 9</strong> least. Numbers are drawn only after the board locks.'
+                : '💡 Numbers stay hidden until the board locks, so nobody can choose a square based on its score digits.';
         }
 
         // Tapping a taken square shows its claim info. Extend the body as we add
