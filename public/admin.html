@@ -1212,10 +1212,13 @@
             if (l) {
                 const filled = lastAdminData ? lastAdminData.squares.length : 0;
                 const total = lastAdminData ? (lastAdminData.cols || 10) * (lastAdminData.rows || 10) : 100;
+                const start = lastAdminData && lastAdminData.espnStart ? new Date(lastAdminData.espnStart).getTime() : NaN;
+                const waits = !isNaN(start) && start > Date.now();
+                const what = waits ? 'Lock the board? The numbers stay hidden until kickoff.' : 'Lock the board and draw the numbers now?';
                 const msg = filled < total
-                    ? `Only ${filled}/${total} squares are claimed. Lock the board and draw the numbers now? This cannot be undone.`
-                    : 'Lock the board and draw the numbers? This cannot be undone.';
-                if (!(await uiConfirm(msg, { okText: 'Lock & draw', danger: filled < total }))) return;
+                    ? `Only ${filled}/${total} squares are claimed. ${what} This cannot be undone.`
+                    : `${what} This cannot be undone.`;
+                if (!(await uiConfirm(msg, { okText: waits ? 'Lock' : 'Lock & draw', danger: filled < total }))) return;
             }
             await apiCall('lock', { locked: l });
         }

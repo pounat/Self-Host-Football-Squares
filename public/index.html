@@ -868,8 +868,8 @@
             winning.innerText = "Q1, Q2, Q3, and the final score of the game, based on the last digit of each team's score.";
             payout.innerText = ' each for Q1, Q2, Q3, and the final score.';
             extra.innerHTML = (data.espnLeague === 'nfl' || data.espnLeague === 'ncaaf')
-                ? '💡 Across NFL history the last digits <strong>0, 7, 3, 4</strong> win most and <strong>2, 5, 9</strong> least. Numbers are drawn only after the board locks.'
-                : '💡 Numbers stay hidden until the board locks, so nobody can choose a square based on its score digits.';
+                ? `💡 Across NFL history the last digits <strong>0, 7, 3, 4</strong> win most and <strong>2, 5, 9</strong> least. Numbers are drawn only ${drawWhen(data)}.`
+                : `💡 Numbers stay hidden until ${data.espnStart ? 'kickoff' : 'the board locks'}, so nobody can choose a square based on its score digits.`;
         }
 
         // Tapping a taken square shows its claim info. Extend the body as we add
@@ -915,15 +915,17 @@
         function closeSquareInfo() { document.getElementById('sq-modal').classList.remove('open'); }
         window.addEventListener('keydown', (e) => { if (e.key === 'Escape') { closeSquareInfo(); closeRules(); closePick(); } });
 
+        // Boards with a kickoff time keep their numbers hidden until kickoff, even if they lock early.
+        function drawWhen(data) { return data.espnStart ? 'at kickoff' : 'once the board locks'; }
         function updateNumbersRule(data) {
             const el = document.getElementById('numbers-rule');
             if (!el) return;
             if (data.scoring === 'goal_minute') el.innerText = data.numberMode === 'per_goal'
                 ? 'Minute digits (0-9) drawn once the board locks, then reshuffled after each goal.'
                 : 'Minute digits (0-9) drawn once the board is locked, then fixed all match.';
-            else if (data.numberMode === 'per_quarter') el.innerText = 'Re-drawn at the start of every quarter.';
-            else if (data.numberMode === 'per_half') el.innerText = 'Re-drawn at halftime.';
-            else el.innerText = 'Randomly generated (0-9) once the board is locked, then fixed all game.';
+            else if (data.numberMode === 'per_quarter') el.innerText = `Drawn ${drawWhen(data)}, then re-drawn at the start of every quarter.`;
+            else if (data.numberMode === 'per_half') el.innerText = `Drawn ${drawWhen(data)}, then re-drawn at halftime.`;
+            else el.innerText = `Randomly generated (0-9) ${drawWhen(data)}, then fixed all game.`;
         }
         function updateCountdown() {
             const el = document.getElementById('countdown');
@@ -981,9 +983,9 @@
         function renderWelcome(data) {
             document.getElementById('wel-title').innerText = 'Welcome to ' + (data.name || 'Squares');
             let rotation;
-            if (data.numberMode === 'per_quarter') rotation = 'The numbers are re-drawn at the start of every quarter.';
-            else if (data.numberMode === 'per_half') rotation = 'The numbers are re-drawn at halftime.';
-            else rotation = 'The numbers are drawn once the board locks and stay the same all game.';
+            if (data.numberMode === 'per_quarter') rotation = `The numbers are drawn ${drawWhen(data)} and re-drawn at the start of every quarter.`;
+            else if (data.numberMode === 'per_half') rotation = `The numbers are drawn ${drawWhen(data)} and re-drawn at halftime.`;
+            else rotation = `The numbers are drawn ${drawWhen(data)} and stay the same all game.`;
             document.getElementById('wel-rules').innerHTML = `
                 <div><span class="k">Cost:</span> $${data.cost} per square.</div>
                 <div><span class="k">Win:</span> Q1, Q2, Q3, and the final score of the game (last digit of each team's score).</div>

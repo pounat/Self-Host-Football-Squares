@@ -976,10 +976,14 @@ async function drawNumbersIfNeeded(poolId) {
     await setSlotNumbers(poolId, SLOTS[mode][0]);
 }
 // Lock a board and draw its numbers (only if not already drawn, so a re-lock or
-// a second trigger leaves an already-numbered board untouched).
+// a second trigger leaves an already-numbered board untouched). A board with a
+// kickoff time keeps its numbers hidden until kickoff, even if it locks early
+// because it filled up; autoLockStartedGames draws them then.
 async function lockPoolAndDraw(poolId) {
     await dbRun('UPDATE pools SET locked = 1 WHERE id = ?', [poolId]);
-    await drawNumbersIfNeeded(poolId);
+    const pool = await dbGet('SELECT espn_start FROM pools WHERE id = ?', [poolId]);
+    const kickoff = pool && pool.espn_start ? new Date(pool.espn_start).getTime() : NaN;
+    if (isNaN(kickoff) || kickoff <= Date.now()) await drawNumbersIfNeeded(poolId);
     bump(poolId);
 }
 async function maybeAutoLockFull(poolId) {
@@ -989,12 +993,14 @@ async function maybeAutoLockFull(poolId) {
 }
 async function autoLockStartedGames() {
     let pools;
-    try { pools = await dbAll("SELECT id, espn_start FROM pools WHERE locked = 0 AND espn_start IS NOT NULL"); }
+    // Also picks up boards that locked early (filled up) and are still waiting on their numbers.
+    try { pools = await dbAll("SELECT id, espn_start, locked FROM pools WHERE (locked = 0 OR numbers_drawn_at IS NULL) AND espn_start IS NOT NULL"); }
     catch (e) { return; }
     const nowMs = Date.now();
     for (const p of pools) {
         const t = new Date(p.espn_start).getTime();
         if (!isNaN(t) && t <= nowMs) {
+            if (p.locked === 1 && await numbersAreDrawn(p.id)) continue;
             try { await lockPoolAndDraw(p.id); } catch (e) { /* skip one pool */ }
         }
     }
