@@ -709,7 +709,9 @@ function parseSummary(sum, espnId) {
         date: comp.date || '',
         state: st.state || 'pre',
         statusDetail: st.shortDetail || st.description || '',
-        period: (comp.status && comp.status.period) || 0,
+        // The summary feed often leaves status.period out, so fall back to how many
+        // periods have a linescore (ESPN adds the in-progress period as it starts).
+        period: (comp.status && comp.status.period) || Math.max(homeObj.linescores.length, awayObj.linescores.length),
         clock: (comp.status && comp.status.displayClock) || '',
         home: homeObj,
         away: awayObj,
