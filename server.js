@@ -5,8 +5,14 @@ const crypto = require('crypto');
 const path = require('path');
 const fs = require('fs');
 
+const multer = require('multer');
+
 const app = express();
-const db = new sqlite3.Database(process.env.DB_PATH || './squares.db');
+const DB_PATH = process.env.DB_PATH || './squares.db';
+const db = new sqlite3.Database(DB_PATH);
+// Chat images sit next to the database so they share its volume and backups.
+const UPLOAD_DIR = path.resolve(path.dirname(DB_PATH), 'uploads');
+fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 
 const PORT = process.env.PORT || 3000;
 const DEFAULT_HEADERS = JSON.stringify(['?', '?', '?', '?', '?', '?', '?', '?', '?', '?']);
@@ -151,6 +157,10 @@ async function migrate() {
     if (user_version < 20) {
         await migrateToV20();
         await dbRun('PRAGMA user_version = 20');
+    }
+    if (user_version < 21) {
+        await migrateToV21();
+        await dbRun('PRAGMA user_version = 21');
     }
 }
 
@@ -401,6 +411,12 @@ async function migrateToV19() {
 async function migrateToV20() {
     const cols = await dbAll('PRAGMA table_info(goals)');
     if (!cols.some((c) => c.name === 'removed')) await dbExec('ALTER TABLE goals ADD COLUMN removed INTEGER DEFAULT 0');
+}
+
+// Chat photos and GIFs: the file lives in UPLOAD_DIR, the message keeps its name.
+async function migrateToV21() {
+    const cols = await dbAll('PRAGMA table_info(messages)');
+    if (!cols.some((c) => c.name === 'image')) await dbExec('ALTER TABLE messages ADD COLUMN image TEXT');
 }
 
 async function logActivity(poolId, text) {
@@ -1207,6 +1223,9 @@ app.post('/api/owner/pools', ownerAuth, ah(async (req, res) => {
 }));
 
 app.delete('/api/owner/pools/:id', ownerAuth, ah(async (req, res) => {
+    const imgs = await dbAll('SELECT image FROM messages WHERE pool_id = ? AND image IS NOT NULL', [req.params.id]);
+    imgs.forEach((m) => removeUpload(m.image));
+    await dbRun('DELETE FROM messages WHERE pool_id = ?', [req.params.id]);
     await dbRun('DELETE FROM squares WHERE pool_id = ?', [req.params.id]);
     await dbRun('DELETE FROM scores WHERE pool_id = ?', [req.params.id]);
     await dbRun('DELETE FROM pools WHERE id = ?', [req.params.id]);
@@ -1254,7 +1273,7 @@ app.get('/api/pool/:id/stream', ah(async (req, res) => {
 app.get('/api/pool/:id/messages', ah(async (req, res) => {
     const pool = await dbGet('SELECT id FROM pools WHERE id = ?', [req.params.id]);
     if (!pool) return res.status(404).json({ error: 'Pool not found' });
-    const rows = await dbAll('SELECT id, sender, body, is_admin, created_at FROM messages WHERE pool_id = ? ORDER BY id DESC LIMIT 200', [req.params.id]);
+    const rows = await dbAll('SELECT id, sender, body, image, is_admin, created_at FROM messages WHERE pool_id = ? ORDER BY id DESC LIMIT 200', [req.params.id]);
     rows.reverse();
     res.json({ messages: rows });
 }));
@@ -1271,6 +1290,49 @@ app.post('/api/pool/:id/messages', ah(async (req, res) => {
     broadcast(req.params.id, 'chat', msg);
     res.json({ message: msg });
 }));
+
+// Photo or GIF in chat. The type comes from the file's first bytes, not its name
+// or what the browser claims, so only real images are ever saved and served.
+const chatUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 8 * 1024 * 1024, files: 1 } }).single('image');
+function imageExt(buf) {
+    if (buf.length < 12) return null;
+    if (buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return 'jpg';
+    if (buf.slice(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return 'png';
+    if (buf.slice(0, 4).toString('latin1') === 'GIF8') return 'gif';
+    if (buf.slice(0, 4).toString('latin1') === 'RIFF' && buf.slice(8, 12).toString('latin1') === 'WEBP') return 'webp';
+    return null;
+}
+const UPLOAD_NAME = /^[A-Za-z0-9]{24}\.(jpg|png|gif|webp)$/;
+function removeUpload(name) {
+    if (name && UPLOAD_NAME.test(name)) fs.unlink(path.join(UPLOAD_DIR, name), () => {});
+}
+function postChatImage(isAdmin) {
+    return (req, res) => chatUpload(req, res, (err) => {
+        if (err) return res.status(400).json({ error: err.code === 'LIMIT_FILE_SIZE' ? 'That image is too big (8 MB max).' : 'Upload failed.' });
+        ah(async () => {
+            const pool = await dbGet('SELECT id FROM pools WHERE id = ?', [req.params.id]);
+            if (!pool) return res.status(404).json({ error: 'Pool not found' });
+            const ext = req.file && imageExt(req.file.buffer);
+            if (!ext) return res.status(400).json({ error: 'Only photos and GIFs can be sent.' });
+            const name = genId(24) + '.' + ext;
+            await fs.promises.writeFile(path.join(UPLOAD_DIR, name), req.file.buffer);
+            const sender = (String(req.body.sender || '').trim().slice(0, 40)) || (isAdmin ? 'Organizer' : 'Guest');
+            const body = String(req.body.body || '').trim().slice(0, 500);
+            const created_at = Date.now();
+            const r = await dbRun('INSERT INTO messages (pool_id, sender, body, image, is_admin, created_at) VALUES (?, ?, ?, ?, ?, ?)', [req.params.id, sender, body, name, isAdmin ? 1 : 0, created_at]);
+            const msg = { id: r.lastID, sender, body, image: name, is_admin: isAdmin ? 1 : 0, created_at };
+            broadcast(req.params.id, 'chat', msg);
+            res.json({ message: msg });
+        })(req, res);
+    });
+}
+app.post('/api/pool/:id/messages/image', postChatImage(false));
+
+app.get('/uploads/:name', (req, res) => {
+    if (!UPLOAD_NAME.test(req.params.name)) return res.status(404).end();
+    res.set('X-Content-Type-Options', 'nosniff');
+    res.sendFile(path.join(UPLOAD_DIR, req.params.name), { maxAge: '30d', immutable: true }, (err) => { if (err && !res.headersSent) res.status(404).end(); });
+});
 
 // Organizer announcements: broadcast notices that pop up once on the player board.
 app.get('/api/pool/:id/announcements', ah(async (req, res) => {
@@ -1731,7 +1793,11 @@ app.post('/api/pool/:id/admin/messages', poolAdmin, ah(async (req, res) => {
     res.json({ message: msg });
 }));
 
+app.post('/api/pool/:id/admin/messages/image', poolAdmin, postChatImage(true));
+
 app.post('/api/pool/:id/admin/messages/:mid/delete', poolAdmin, ah(async (req, res) => {
+    const old = await dbGet('SELECT image FROM messages WHERE id = ? AND pool_id = ?', [req.params.mid, req.params.id]);
+    if (old) removeUpload(old.image);
     await dbRun('DELETE FROM messages WHERE id = ? AND pool_id = ?', [req.params.mid, req.params.id]);
     broadcast(req.params.id, 'chat-delete', { id: Number(req.params.mid) });
     res.json({ success: true });

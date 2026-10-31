@@ -293,8 +293,17 @@
         .chat-msg .txt { color: #e3e3e3; word-break: break-word; white-space: pre-wrap; }
         .chat-empty { color: #777; font-size: 0.85rem; text-align: center; margin: auto 0; }
         .chat-form { display: flex; gap: 8px; padding: 10px; border-top: 1px solid #444; }
-        .chat-form input { flex: 1; min-width: 0; background: #2d2d2d; border: 1px solid #444; color: #fff; padding: 9px 11px; border-radius: 20px; font-size: 0.9rem; }
-        .chat-form input:focus { outline: 2px solid #008CFF; border-color: transparent; }
+        .chat-form #chat-input { flex: 1; min-width: 0; background: #2d2d2d; border: 1px solid #444; color: #fff; padding: 9px 11px; border-radius: 20px; font-size: 0.9rem; max-height: 90px; overflow-y: auto; white-space: pre-wrap; word-break: break-word; cursor: text; }
+        .chat-form #chat-input:focus { outline: 2px solid #008CFF; border-color: transparent; }
+        .chat-form #chat-input:empty::before { content: attr(data-placeholder); color: #777; pointer-events: none; }
+        .chat-form #chat-input img { display: none; }
+        .chat-form .chat-photo { background: #2d2d2d; border: 1px solid #444; color: #fff; border-radius: 50%; width: 38px; height: 38px; cursor: pointer; font-size: 1rem; flex-shrink: 0; display: flex; align-items: center; justify-content: center; }
+        .chat-form .chat-photo input { display: none; }
+        .chat-msg .chat-img { display: block; max-width: min(240px, 100%); max-height: 260px; border-radius: 10px; margin-top: 4px; cursor: zoom-in; background: #2d2d2d; }
+        .chat-sending { color: #888; font-size: 0.78rem; font-style: italic; }
+        #img-viewer { position: fixed; inset: 0; background: rgba(0,0,0,0.92); display: none; align-items: center; justify-content: center; z-index: 3000; cursor: zoom-out; }
+        #img-viewer.open { display: flex; }
+        #img-viewer img { max-width: 96vw; max-height: 92vh; border-radius: 6px; }
         .chat-form button { background: #008CFF; color: #fff; border: none; border-radius: 50%; width: 38px; height: 38px; cursor: pointer; font-size: 1rem; flex-shrink: 0; }
     </style>
 </head>
@@ -415,10 +424,13 @@
         </div>
         <div id="chat-log"><div class="chat-empty">Loading...</div></div>
         <form class="chat-form" onsubmit="return sendChat(event)">
-            <input id="chat-input" placeholder="Message the board..." maxlength="500" autocomplete="off">
+            <label class="chat-photo" title="Send a photo or GIF">📷<input id="chat-file" type="file" accept="image/*" onchange="pickChatImage(this)"></label>
+            <!-- A rich text box rather than an <input>, so phone keyboards can drop a GIF or sticker straight in. -->
+            <div id="chat-input" contenteditable="true" role="textbox" aria-label="Message the board" data-placeholder="Message the board..." enterkeyhint="send"></div>
             <button type="submit" title="Send">➤</button>
         </form>
     </div>
+    <div id="img-viewer" onclick="this.classList.remove('open')"><img alt=""></div>
 
     <script>
         let isLocked = false;
@@ -1183,7 +1195,17 @@
             const mine = !m.is_admin && m.sender && m.sender === getNick();
             const cls = 'chat-msg' + (m.is_admin ? ' admin' : (mine ? ' mine' : ''));
             const badge = m.is_admin ? '<span class="badge">ORGANIZER</span>' : '';
-            return `<div class="${cls}" data-id="${m.id}"><span class="who">${esc(m.sender || 'Guest')}${badge}<span class="when">${fmtTime(m.created_at)}</span></span><div class="txt">${esc(m.body)}</div></div>`;
+            const img = m.image ? `<img class="chat-img" src="/uploads/${encodeURIComponent(m.image)}" alt="" loading="lazy" onload="chatImgLoaded()" onclick="viewImage(this.src)">` : '';
+            const txt = m.body ? `<div class="txt">${esc(m.body)}</div>` : '';
+            return `<div class="${cls}" data-id="${m.id}"><span class="who">${esc(m.sender || 'Guest')}${badge}<span class="when">${fmtTime(m.created_at)}</span></span>${txt}${img}</div>`;
+        }
+        // An image that finishes loading pushes the log taller; keep the view pinned to the newest message.
+        let chatPinned = true;
+        function chatImgLoaded() { if (chatPinned) { const log = document.getElementById('chat-log'); log.scrollTop = log.scrollHeight; } }
+        function viewImage(src) {
+            const v = document.getElementById('img-viewer');
+            v.querySelector('img').src = src;
+            v.classList.add('open');
         }
         function chatAtBottom() {
             const log = document.getElementById('chat-log');
@@ -1198,6 +1220,7 @@
             const stick = chatAtBottom();
             log.insertAdjacentHTML('beforeend', chatRowHtml(m));
             if (stick || fromHistory) log.scrollTop = log.scrollHeight;
+            chatPinned = stick || fromHistory;
             if (!fromHistory && !chatOpen) { chatUnread++; renderUnread(); }
         }
         function removeMessage(id) {
@@ -1238,21 +1261,115 @@
             }
         }
         async function sendChat(e) {
-            e.preventDefault();
+            if (e) e.preventDefault();
             const input = document.getElementById('chat-input');
-            const body = input.value.trim();
+            const body = input.innerText.trim().slice(0, 500);
+            input.textContent = '';
             if (!body) return false;
             const sender = getNick() || 'Guest';
-            input.value = '';
             try {
                 await fetch(`/api/pool/${poolId}/messages`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ sender, body }),
                 });
-            } catch (err) { input.value = body; }
+            } catch (err) { input.textContent = body; }
             return false;
         }
+
+        // --- CHAT PHOTOS + GIFS ---
+        // Photos are shrunk in the browser first so a 12 MP phone shot does not fill the
+        // server. GIFs go up untouched so they keep moving.
+        async function shrinkImage(file) {
+            if (file.type === 'image/gif') return file;
+            try {
+                const bmp = await createImageBitmap(file, { imageOrientation: 'from-image' });
+                const scale = Math.min(1, 1600 / Math.max(bmp.width, bmp.height));
+                const canvas = document.createElement('canvas');
+                canvas.width = Math.round(bmp.width * scale);
+                canvas.height = Math.round(bmp.height * scale);
+                canvas.getContext('2d').drawImage(bmp, 0, 0, canvas.width, canvas.height);
+                const blob = await new Promise((res) => canvas.toBlob(res, 'image/jpeg', 0.85));
+                return blob || file;
+            } catch (e) { return file; }
+        }
+        async function sendChatImage(file) {
+            if (!file || !/^image\//.test(file.type)) return;
+            const log = document.getElementById('chat-log');
+            const note = document.createElement('div');
+            note.className = 'chat-sending';
+            note.innerText = 'Sending image...';
+            log.appendChild(note);
+            log.scrollTop = log.scrollHeight;
+            try {
+                const fd = new FormData();
+                fd.append('sender', getNick() || 'Guest');
+                fd.append('image', await shrinkImage(file), file.name || 'image');
+                const r = await fetch(`/api/pool/${poolId}/messages/image`, { method: 'POST', body: fd });
+                if (!r.ok) { const d = await r.json().catch(() => ({})); alert(d.error || 'Could not send that image.'); }
+            } catch (e) { alert('Could not send that image.'); }
+            note.remove();
+        }
+        function pickChatImage(el) {
+            const f = el.files && el.files[0];
+            el.value = '';
+            sendChatImage(f);
+        }
+        // Pull an image out of whatever the keyboard or clipboard handed over.
+        function imageFromData(dt) {
+            if (!dt) return null;
+            for (const item of dt.items || []) {
+                if (item.kind === 'file' && /^image\//.test(item.type)) return item.getAsFile();
+            }
+            for (const f of dt.files || []) if (/^image\//.test(f.type)) return f;
+            return null;
+        }
+        function caretToEnd(el) {
+            const range = document.createRange();
+            range.selectNodeContents(el);
+            range.collapse(false);
+            const sel = window.getSelection();
+            sel.removeAllRanges();
+            sel.addRange(range);
+        }
+        (function wireChatInput() {
+            const input = document.getElementById('chat-input');
+            input.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); sendChat(); }
+            });
+            input.addEventListener('paste', (e) => {
+                const img = imageFromData(e.clipboardData);
+                e.preventDefault();
+                if (img) { sendChatImage(img); return; }
+                const text = e.clipboardData ? e.clipboardData.getData('text/plain') : '';
+                if (text) document.execCommand('insertText', false, text);
+            });
+            input.addEventListener('drop', (e) => {
+                const img = imageFromData(e.dataTransfer);
+                if (img) { e.preventDefault(); sendChatImage(img); }
+            });
+            // Some keyboards (iPhone stickers and #images, Gboard GIFs) insert the image
+            // straight into the box instead of going through paste.
+            input.addEventListener('beforeinput', (e) => {
+                const img = imageFromData(e.dataTransfer);
+                if (img) { e.preventDefault(); sendChatImage(img); }
+            });
+            input.addEventListener('input', async () => {
+                const imgs = input.querySelectorAll('img');
+                for (const el of imgs) {
+                    const src = el.src;
+                    el.remove();
+                    try {
+                        const blob = await (await fetch(src)).blob();
+                        sendChatImage(new File([blob], 'keyboard', { type: blob.type || 'image/gif' }));
+                    } catch (e) { /* the keyboard handed over something we cannot read */ }
+                }
+                // Keep the box plain text: drop any other formatting the keyboard added, and
+                // clear a leftover <br> so the placeholder comes back.
+                if (input.querySelector('*:not(br)')) { input.textContent = input.innerText; caretToEnd(input); }
+                if (!input.innerText.trim()) input.textContent = '';
+            });
+        })();
 
         let reloadTimer = null;
         function scheduleReload() {

@@ -2,3 +2,4 @@ node_modules/
 squares.db
 squares.db.bak
 .DS_Store
+uploads/
