@@ -288,6 +288,8 @@
         .chat-msg .who { font-weight: 700; color: #4aa8ff; font-size: 0.78rem; }
         .chat-msg.mine .who { color: #4ade80; }
         .chat-msg.admin .who { color: #fbbf24; }
+        .chat-msg.bot .who { color: #c084fc; }
+        .chat-msg .badge.bot { background: #c084fc; }
         .chat-msg .badge { font-size: 0.62rem; color: #121212; background: #fbbf24; border-radius: 4px; padding: 0 4px; margin-left: 5px; font-weight: 800; }
         .chat-msg .when { color: #666; font-size: 0.66rem; margin-left: 6px; font-weight: 400; }
         .chat-msg .txt { color: #e3e3e3; word-break: break-word; white-space: pre-wrap; }
@@ -1193,8 +1195,9 @@
         }
         function chatRowHtml(m) {
             const mine = !m.is_admin && m.sender && m.sender === getNick();
-            const cls = 'chat-msg' + (m.is_admin ? ' admin' : (mine ? ' mine' : ''));
-            const badge = m.is_admin ? '<span class="badge">ORGANIZER</span>' : '';
+            const bot = m.is_admin === 2;
+            const cls = 'chat-msg' + (bot ? ' bot' : (m.is_admin ? ' admin' : (mine ? ' mine' : '')));
+            const badge = bot ? '<span class="badge bot">BOT</span>' : (m.is_admin ? '<span class="badge">ORGANIZER</span>' : '');
             const img = m.image ? `<img class="chat-img" src="/uploads/${encodeURIComponent(m.image)}" alt="" loading="lazy" onload="chatImgLoaded()" onclick="viewImage(this.src)">` : '';
             const txt = m.body ? `<div class="txt">${esc(m.body)}</div>` : '';
             return `<div class="${cls}" data-id="${m.id}"><span class="who">${esc(m.sender || 'Guest')}${badge}<span class="when">${fmtTime(m.created_at)}</span></span>${txt}${img}</div>`;

@@ -169,6 +169,10 @@
         .acm .chat-img { display: block; max-width: min(220px, 100%); max-height: 220px; border-radius: 8px; margin-top: 4px; cursor: zoom-in; background: #2d2d2d; }
         .admin-photo { cursor: pointer; font-size: 1.1rem; padding: 0 6px; display: flex; align-items: center; }
         .admin-photo input { display: none; }
+        .acm.bot .who { color: #c084fc; }
+        .acm .badge.bot { background: #c084fc; }
+        .bot-opt { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; cursor: pointer; color: #ddd; font-size: 0.88rem; margin: 8px 0; }
+        .bot-opt input[type=checkbox] { width: auto; flex: 0 0 auto; margin: 0; }
         .chat-empty { color: #777; font-size: 0.85rem; text-align: center; padding: 20px 0; }
 
         /* Announcements list */
@@ -439,6 +443,38 @@
             <div id="announce-list" style="margin-top:10px;"></div>
         </div>
 
+        <div class="panel-box">
+            <h3>10. 🤖 Game Bot</h3>
+            <p style="font-size:0.82rem; color:#888; margin:0 0 10px;">Posts rivalry facts and quarter reactions into the board chat, written by Claude. Only you can make it talk: players can't message it.</p>
+            <div id="bot-key-set" style="display:none;" class="row">
+                <span style="color:#4ade80; font-size:0.85rem; flex:1;">✓ Claude API key saved (ending <span id="bot-key-hint"></span>)</span>
+                <button class="ghost" onclick="removeBotKey()">Remove</button>
+            </div>
+            <form id="bot-key-form" class="row" onsubmit="return saveBotKey(event)">
+                <input id="bot-key-input" type="password" placeholder="Paste your Claude API key (sk-ant-...)" autocomplete="off" style="flex:1; min-width:0;">
+                <button type="submit" class="primary">Save key</button>
+            </form>
+            <div id="bot-controls" style="display:none;">
+                <label class="bot-opt"><input type="checkbox" id="bot-enabled" onchange="saveBot({ enabled: this.checked })"> Bot is on for this board</label>
+                <div id="bot-auto" style="margin-left:26px;">
+                    <label class="bot-opt"><input type="checkbox" id="bot-facts" onchange="saveBot({ facts: this.checked })"> Rivalry facts before kickoff, every
+                        <select id="bot-every" onchange="saveBot({ factEveryMin: Number(this.value) })" style="width:auto;"><option value="20">20 min</option><option value="30">30 min</option><option value="45">45 min</option><option value="60">hour</option><option value="120">2 hours</option></select>
+                        starting
+                        <select id="bot-hours" onchange="saveBot({ factHoursBefore: Number(this.value) })" style="width:auto;"><option value="1">1 hour</option><option value="2">2 hours</option><option value="3">3 hours</option><option value="6">6 hours</option><option value="24">a day</option></select>
+                        before</label>
+                    <label class="bot-opt"><input type="checkbox" id="bot-reactions" onchange="saveBot({ reactions: this.checked })"> React when each quarter's winner is decided (and who it slipped away from)</label>
+                    <label class="bot-opt"><input type="checkbox" id="bot-scores" onchange="saveBot({ scoreUpdates: this.checked })"> After every score, say who's holding the quarter now</label>
+                    <label class="bot-opt"><input type="checkbox" id="bot-redzone" onchange="saveBot({ redZone: this.checked })"> Red zone alerts: who a field goal or touchdown would hand it to</label>
+                    <label class="bot-opt"><input type="checkbox" id="bot-trash" onchange="saveBot({ trash: this.checked })"> 🔥 Trash talk (full roast)</label>
+                    <p style="font-size:0.75rem; color:#777; margin:2px 0 0;">Score updates, red zone alerts and "so close" call-outs need the game linked to ESPN with live scores on.</p>
+                </div>
+                <form class="row" style="margin:10px 0 0;" onsubmit="return botPostNow(event)">
+                    <input id="bot-topic" placeholder="Optional: what to post about (blank = a random fact)" maxlength="300" autocomplete="off" style="flex:1; min-width:0;">
+                    <button type="submit" class="primary" id="bot-post-btn">Post now</button>
+                </form>
+            </div>
+        </div>
+
             <br>
             <a id="back-link" href="/" style="color:#008CFF; text-decoration:none;">← Back to Public Board</a>
           </div>
@@ -482,6 +518,7 @@
                 setupCollapsibles();
                 loadAdmin();
                 startAdminLive();
+                loadBot();
             } else {
                 document.getElementById('login-screen').style.display = 'block';
                 document.getElementById('admin-ui').style.display = 'none';
@@ -1244,13 +1281,71 @@
             try { return new Date(n).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); } catch (e) { return ''; }
         }
         function adminMsgHtml(m) {
-            const badge = m.is_admin ? '<span class="badge">ORGANIZER</span>' : '';
-            return `<div class="acm${m.is_admin ? ' admin' : ''}" data-id="${m.id}">`
+            const bot = m.is_admin === 2;
+            const badge = bot ? '<span class="badge bot">BOT</span>' : (m.is_admin ? '<span class="badge">ORGANIZER</span>' : '');
+            return `<div class="acm${bot ? ' bot' : (m.is_admin ? ' admin' : '')}" data-id="${m.id}">`
                 + `<span class="who">${aEsc(m.sender || 'Guest')}${badge}<span class="when">${aFmtTime(m.created_at)}</span>`
                 + `<button class="del" title="Delete" onclick="deleteAdminMsg(${m.id})">delete</button></span>`
                 + (m.body ? `<div class="txt">${aEsc(m.body)}</div>` : '')
                 + (m.image ? `<img class="chat-img" src="/uploads/${encodeURIComponent(m.image)}" alt="" loading="lazy" onclick="window.open(this.src, '_blank')">` : '')
                 + `</div>`;
+        }
+        // --- GAME BOT ---
+        async function botApi(path, body) {
+            const res = await fetch(`/api/pool/${poolId}/admin/bot${path}`, {
+                method: body ? 'POST' : 'GET',
+                headers: { 'Content-Type': 'application/json', 'X-Admin-Token': adminToken },
+                body: body ? JSON.stringify(body) : undefined,
+            });
+            const d = await res.json().catch(() => ({}));
+            if (!res.ok) { uiAlert(d.error || 'Something went wrong.'); return null; }
+            return d;
+        }
+        async function loadBot() {
+            const b = await botApi('');
+            if (!b) return;
+            document.getElementById('bot-key-set').style.display = b.hasKey ? 'flex' : 'none';
+            document.getElementById('bot-key-form').style.display = b.hasKey ? 'none' : 'flex';
+            document.getElementById('bot-key-hint').innerText = b.keyHint;
+            document.getElementById('bot-controls').style.display = b.hasKey ? 'block' : 'none';
+            document.getElementById('bot-enabled').checked = b.enabled;
+            document.getElementById('bot-facts').checked = b.facts;
+            document.getElementById('bot-reactions').checked = b.reactions;
+            document.getElementById('bot-scores').checked = b.scoreUpdates;
+            document.getElementById('bot-redzone').checked = b.redZone;
+            document.getElementById('bot-trash').checked = b.trash;
+            document.getElementById('bot-every').value = String(b.factEveryMin);
+            document.getElementById('bot-hours').value = String(b.factHoursBefore);
+            document.getElementById('bot-auto').style.opacity = b.enabled ? '' : '0.5';
+        }
+        async function saveBotKey(e) {
+            e.preventDefault();
+            const input = document.getElementById('bot-key-input');
+            const key = input.value.trim();
+            if (!key) return false;
+            const btn = input.form.querySelector('button');
+            btn.disabled = true; btn.innerText = 'Checking...';
+            const ok = await botApi('/key', { key });
+            btn.disabled = false; btn.innerText = 'Save key';
+            if (ok) { input.value = ''; loadBot(); }
+            return false;
+        }
+        async function removeBotKey() {
+            if (!(await uiConfirm('Remove the Claude API key? The bot stops on every board.', { danger: true, okText: 'Remove' }))) return;
+            if (await botApi('/key', { key: '' })) loadBot();
+        }
+        async function saveBot(change) {
+            if (await botApi('', change)) loadBot();
+        }
+        async function botPostNow(e) {
+            e.preventDefault();
+            const input = document.getElementById('bot-topic');
+            const btn = document.getElementById('bot-post-btn');
+            btn.disabled = true; btn.innerText = 'Writing...';
+            const ok = await botApi('/post', { topic: input.value.trim() });
+            btn.disabled = false; btn.innerText = 'Post now';
+            if (ok) input.value = '';
+            return false;
         }
         async function sendAdminImage(el) {
             const f = el.files && el.files[0];
