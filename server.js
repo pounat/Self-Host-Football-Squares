@@ -167,6 +167,10 @@ async function migrate() {
         await migrateToV22();
         await dbRun('PRAGMA user_version = 22');
     }
+    if (user_version < 23) {
+        await migrateToV23();
+        await dbRun('PRAGMA user_version = 23');
+    }
 }
 
 async function migrateToV1() {
@@ -430,6 +434,13 @@ async function migrateToV22() {
     if (!siteCols.some((c) => c.name === 'anthropic_key')) await dbExec('ALTER TABLE site ADD COLUMN anthropic_key TEXT');
     const poolCols = await dbAll('PRAGMA table_info(pools)');
     if (!poolCols.some((c) => c.name === 'bot')) await dbExec('ALTER TABLE pools ADD COLUMN bot TEXT');
+}
+
+// Which team a player is rooting for: 'top', 'left', 'both' or 'none'. Paid squares
+// glow in that team's color on the player board.
+async function migrateToV23() {
+    const cols = await dbAll('PRAGMA table_info(squares)');
+    if (!cols.some((c) => c.name === 'fan')) await dbExec('ALTER TABLE squares ADD COLUMN fan TEXT');
 }
 
 async function logActivity(poolId, text) {
@@ -1392,7 +1403,7 @@ app.get('/api/pool/:id', ah(async (req, res) => {
     const pool = await dbGet('SELECT * FROM pools WHERE id = ?', [req.params.id]);
     if (!pool) return res.status(404).json({ error: 'Pool not found' });
 
-    const squares = await dbAll('SELECT row, col, name, nickname, is_paid, claimed_at FROM squares WHERE pool_id = ?', [req.params.id]);
+    const squares = await dbAll('SELECT row, col, name, nickname, is_paid, claimed_at, fan FROM squares WHERE pool_id = ?', [req.params.id]);
     const scoreRows = await dbAll('SELECT period, top_score, left_score FROM scores WHERE pool_id = ?', [req.params.id]);
     const annRows = await dbAll('SELECT row, col, text, icon FROM annotations WHERE pool_id = ?', [req.params.id]);
     const annotations = {};
@@ -1527,6 +1538,7 @@ app.post('/api/pool/:id/claim', ah(async (req, res) => {
     } catch (e) {
         return res.status(400).json({ error: 'Square taken.' });
     }
+    await setFan(req.params.id, name, req.body.fan);
     await maybeAutoLockFull(req.params.id);
     res.json({ success: true });
 }));
@@ -1563,9 +1575,24 @@ app.post('/api/pool/:id/claim-batch', ah(async (req, res) => {
         await dbRun('ROLLBACK');
         throw e;
     }
+    await setFan(req.params.id, name, req.body.fan);
     await maybeAutoLockFull(req.params.id);
     if (claimed > 0) await logActivity(req.params.id, `${name} claimed ${claimed} square${claimed !== 1 ? 's' : ''}`);
     res.json({ success: true, claimed, errors });
+}));
+
+// The team pick belongs to the person, so it applies to every square they hold.
+const FAN_CHOICES = ['top', 'left', 'both', 'none'];
+async function setFan(poolId, name, fan) {
+    if (!FAN_CHOICES.includes(fan) || !name) return false;
+    const r = await dbRun('UPDATE squares SET fan = ? WHERE pool_id = ? AND name = ?', [fan, poolId, name]);
+    return r.changes > 0;
+}
+app.post('/api/pool/:id/fan', ah(async (req, res) => {
+    const name = cleanName(req.body.name);
+    if (!FAN_CHOICES.includes(req.body.fan) || !name) return res.status(400).json({ error: 'Pick a team.' });
+    if (!(await setFan(req.params.id, name, req.body.fan))) return res.status(404).json({ error: 'No squares under that name.' });
+    res.json({ success: true });
 }));
 
 // --- ADMIN ---

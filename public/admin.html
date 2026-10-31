@@ -889,7 +889,8 @@
                         ${nickLine}
                         <div><span class="k">Claimed:</span> ${when}</div>
                         <div><span class="k">Numbers:</span> ${nums}</div>
-                        <div><span class="k">Payment:</span> ${paid}</div>`;
+                        <div><span class="k">Payment:</span> ${paid}</div>
+                        <div><span class="k">Rooting for:</span> ${escapeHtml(({ top: data.teamTop, left: data.teamLeft, both: 'Both teams', none: 'Neither' })[sq.fan] || 'Not picked')}</div>`;
                 buttons = [
                     { text: sq.is_paid === 1 ? 'Mark unpaid' : 'Mark paid', class: sq.is_paid === 1 ? 'ghost' : 'primary', value: 'pay' },
                     { text: 'Edit name', class: 'ghost', value: 'edit' },

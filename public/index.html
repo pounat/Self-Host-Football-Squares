@@ -175,6 +175,32 @@
         .square.taken { background: #2a3c55; color: #fff; font-weight: 600; cursor: default; border: 1px solid #3d4f68; }
         .square.taken:hover { transform: none; }
         .square.paid { background: #1e7a4d; color: #eafff3; border: 1px solid #34c77b; }
+        /* Paid squares glow in the team the player is rooting for, logo faded behind the name. */
+        .square.paid.fan { position: relative; background: #181818; color: #fff; text-shadow: 0 1px 3px #000, 0 0 2px #000;
+            border: 1px solid var(--glow); box-shadow: inset 0 0 12px var(--glow), 0 0 7px var(--glow); }
+        .square.paid.fan.fan-both { border-color: var(--glow) var(--glow2) var(--glow2) var(--glow);
+            box-shadow: inset 5px 5px 10px -3px var(--glow), inset -5px -5px 10px -3px var(--glow2), -2px -2px 6px var(--glow), 2px 2px 6px var(--glow2); }
+        .square.paid.fan::before { content: ''; position: absolute; inset: 3px 3px 18px; background: var(--logo) center / contain no-repeat; opacity: 0.9; pointer-events: none; }
+        .square.paid.fan.fan-both::before { background: var(--logo) left 8% center / 44% auto no-repeat, var(--logo2) right 8% center / 44% auto no-repeat; opacity: 0.85; }
+        .square.paid.fan-none { background: #3a3a3a; color: #f1f1f1; border: 1px solid #5a5a5a; }
+        .fan-name { position: relative; z-index: 1; background: rgba(0, 0, 0, 0.72); border-radius: 5px; padding: 1px 4px; max-width: calc(100% - 4px);
+            line-height: 1.15; overflow-wrap: anywhere; text-shadow: none; }
+        .square.paid.fan:not(.winner) .fan-name { position: absolute; left: 3px; right: 3px; bottom: 3px; max-width: none; text-align: center; font-size: 0.8em; padding: 1px 2px; overflow-wrap: break-word; }
+        .square.winner .fan-name { background: none; padding: 0; }
+        /* A winning square goes gold like any winner; the team shows as an inner ring and a small corner logo so the name stays readable. */
+        .square.paid.fan.winner { text-shadow: none; }
+        .square.paid.fan.winner::after { content: ''; position: absolute; inset: 2px; border: 2px solid var(--glow); border-radius: 4px; pointer-events: none; }
+        .square.paid.fan.fan-both.winner::after { border-color: var(--glow) var(--glow2) var(--glow2) var(--glow); }
+        .square.paid.fan.winner::before { inset: auto auto 4px 4px; width: 30%; height: 30%; background-position: left bottom; opacity: 1; filter: drop-shadow(0 0 1px rgba(0,0,0,0.6)); }
+        .square.paid.fan.fan-both.winner::before { inset: auto 4px 4px 4px; width: auto; height: 30%;
+            background: var(--logo) left bottom / contain no-repeat, var(--logo2) right bottom / contain no-repeat; }
+        .fan-picks { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-top: 6px; }
+        .fan-pick { background: #252525; border: 2px solid #3a3a3a; border-radius: 10px; color: #ddd; padding: 8px 4px; cursor: pointer; font-size: 0.72rem; font-weight: 700;
+            display: flex; flex-direction: column; align-items: center; gap: 4px; min-width: 0; }
+        .fan-pick img { width: 30px; height: 30px; object-fit: contain; }
+        .fan-pick .fan-dot { width: 30px; height: 30px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 1rem; }
+        .fan-pick span.lbl { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
+        .fan-pick.on { border-color: var(--glow, #008CFF); box-shadow: 0 0 10px var(--glow, #008CFF); color: #fff; }
 
         /* MULTI-SELECT */
         .square.selected { background: #008CFF; color: white; border: 2px solid white; transform: scale(0.95); z-index: 5; }
@@ -394,7 +420,7 @@
                     <li><strong>Rollover Rule:</strong> If the winning square is empty, the winner is the closest filled square moving to the right (like reading).</li>
                     <li><strong>Payouts:</strong> <span id="payout-display">...</span><span id="payout-rule"> each for Q1, Q2, Q3, and the final score.</span></li>
                     <li><strong>Numbers:</strong> <span id="numbers-rule">Randomly generated (0-9) once the board is locked.</span></li>
-                    <li><strong>Colors:</strong> claimed squares show blue, turning green once paid.</li>
+                    <li><strong>Colors:</strong> claimed squares show blue. Once paid, they glow in the team you're rooting for (gray if you picked neither).</li>
                 </ul>
                 <p id="rules-extra" style="font-size:0.82rem; color:#888; border-top:1px dashed #444; padding-top:10px; margin-top:4px;">💡 Across NFL history the last digits <strong>0, 7, 3, 4</strong> win most and <strong>2, 5, 9</strong> least. Numbers are drawn only after the board locks.</p>
                 <div class="venmo-area" id="venmo-area" style="display:none;">
@@ -657,6 +683,7 @@
                     if(isLiveTarget && !taken) txt = '↪';
 
                     const div = createDiv(cls, txt, { gridRow: String(base + 1 + r), gridColumn: String(base + 1 + c) });
+                    if (taken && taken.is_paid === 1 && !gm) applyFanStyle(div, taken.fan, data);
                     if(multi && isWinner) {
                         const badges = document.createElement('div');
                         badges.className = 'pwin-badges';
@@ -706,6 +733,68 @@
             openSubmit();
         }
 
+        // --- TEAM PICK (paid squares glow in the team you're rooting for) ---
+        const FAN_KEY = 'playerFan:' + poolId;
+        let fanChoice = null;
+        try { fanChoice = localStorage.getItem(FAN_KEY); } catch (e) { /* private mode */ }
+        // Team colors straight from ESPN can be too dark to glow on a dark board (BYU
+        // navy), so lift them toward white until they read.
+        function glowColor(hex) {
+            const m = /^#?([0-9a-f]{6})$/i.exec(String(hex || '').trim());
+            if (!m) return '#888888';
+            let [r, g, b] = [0, 2, 4].map((i) => parseInt(m[1].slice(i, i + 2), 16));
+            const lum = () => (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
+            for (let i = 0; i < 10 && lum() < 0.32; i++) { r += (255 - r) * 0.15; g += (255 - g) * 0.15; b += (255 - b) * 0.15; }
+            return '#' + [r, g, b].map((v) => Math.round(v).toString(16).padStart(2, '0')).join('');
+        }
+        function fanTeam(data, side) {
+            return side === 'top'
+                ? { name: data.teamTop || 'Top', color: glowColor(data.colorTop), logo: data.logoTop }
+                : { name: data.teamLeft || 'Left', color: glowColor(data.colorLeft), logo: data.logoLeft };
+        }
+        const cssUrl = (u) => u ? `url("${String(u).replace(/["\\\n]/g, '')}")` : 'none';
+        function applyFanStyle(div, fan, data) {
+            if (fan !== 'top' && fan !== 'left' && fan !== 'both') { div.classList.add('fan-none'); return; }
+            const a = fanTeam(data, fan === 'left' ? 'left' : 'top');
+            div.classList.add('fan');
+            // The name sits on its own dark tag so the logo behind it never makes it hard to read.
+            const tag = document.createElement('span');
+            tag.className = 'fan-name';
+            tag.innerText = div.innerText;
+            div.innerText = '';
+            div.appendChild(tag);
+            div.style.setProperty('--glow', a.color);
+            div.style.setProperty('--logo', cssUrl(a.logo));
+            if (fan === 'both') {
+                const b = fanTeam(data, 'left');
+                div.classList.add('fan-both');
+                div.style.setProperty('--glow2', b.color);
+                div.style.setProperty('--logo2', cssUrl(b.logo));
+            }
+        }
+        function fanPickerHtml(data, current) {
+            const t = fanTeam(data, 'top'), l = fanTeam(data, 'left');
+            const icon = (team) => team.logo ? `<img src="${escapeHtml(team.logo)}" alt="">` : `<span class="fan-dot" style="background:${team.color}"></span>`;
+            const opts = [
+                ['top', icon(t), t.name, t.color],
+                ['left', icon(l), l.name, l.color],
+                ['both', `<span class="fan-dot" style="background:linear-gradient(135deg, ${t.color} 50%, ${l.color} 50%)"></span>`, 'Both', '#c084fc'],
+                ['none', '<span class="fan-dot" style="background:#3a3a3a">–</span>', 'Neither', '#888'],
+            ];
+            return `<div class="fan-picks">${opts.map(([v, ic, lbl, col]) =>
+                `<button type="button" class="fan-pick${current === v ? ' on' : ''}" style="--glow:${col}" onclick="pickFan(this, '${v}')">${ic}<span class="lbl">${escapeHtml(lbl)}</span></button>`).join('')}</div>`;
+        }
+        function pickFan(btn, v) {
+            fanChoice = v;
+            try { localStorage.setItem(FAN_KEY, v); } catch (e) { /* private mode */ }
+            btn.parentElement.querySelectorAll('.fan-pick').forEach((b) => b.classList.toggle('on', b === btn));
+        }
+        async function changeMyTeam(btn, v) {
+            pickFan(btn, v);
+            await fetch(`/api/pool/${poolId}/fan`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: getName(), fan: v }) });
+            load();
+        }
+
         function openSubmit() {
             const count = selectedSquares.length;
             const cost = lastData ? Number(lastData.cost) : 0;
@@ -724,7 +813,9 @@
                 pay = `<div style="margin-top:14px; font-size:0.9rem; color:#ddd;">Hand <strong>$${total}</strong> cash to the admin.</div>`;
             }
             document.getElementById('sm-body').innerHTML =
-                `<div>Claiming as <strong>${escapeHtml(getNick())}</strong>, total <strong>$${total}</strong> <span style="color:#888;">($${cost} × ${count})</span>.</div>${pay}
+                `<div>Claiming as <strong>${escapeHtml(getNick())}</strong>, total <strong>$${total}</strong> <span style="color:#888;">($${cost} × ${count})</span>.</div>
+                 ${lastData && lastData.scoring !== 'goal_minute' ? `<div style="margin-top:14px; font-size:0.85rem; color:#aaa;">Who are you rooting for? <span style="color:#666;">Your paid squares glow in their colors.</span></div>${fanPickerHtml(lastData, fanChoice)}` : ''}
+                 ${pay}
                  <div style="margin-top:12px; font-size:0.8rem; color:#fbbf24;">${payDeadlineMsg()}</div>`;
             document.getElementById('sm-actions').innerHTML =
                 `<button class="modal-close" onclick="confirmSubmit()">Confirm &amp; Claim</button>
@@ -737,7 +828,7 @@
             const res = await fetch(`/api/pool/${poolId}/claim-batch`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ squares: selectedSquares, name: getName(), nickname: getNick() })
+                body: JSON.stringify({ squares: selectedSquares, name: getName(), nickname: getNick(), fan: fanChoice })
             });
             const d = await res.json();
             const claimed = (d.claimed != null) ? d.claimed : count;
@@ -922,6 +1013,7 @@
                 <div><span class="k">Numbers:</span> ${numbers}</div>
                 <div><span class="k">Payment:</span> ${paid}</div>
                 ${annLine}
+                ${sq.name === getName() && data.scoring !== 'goal_minute' ? `<div style="margin-top:12px; font-size:0.85rem; color:#aaa;">Rooting for <span style="color:#666;">(all your squares)</span></div>${fanPickerHtml(data, sq.fan || 'none').replace(/pickFan\(/g, 'changeMyTeam(')}` : ''}
                 ${isLocked ? '' : `<div style="margin-top:10px; color:#888; font-size:0.82rem;">To remove this square, ask the admin to clear cell #${cellId}.</div>`}
             `;
             document.getElementById('sq-modal').classList.add('open');
