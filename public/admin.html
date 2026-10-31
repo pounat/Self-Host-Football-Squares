@@ -385,8 +385,9 @@
                 <div id="period-label" style="font-size:0.8rem; color:#888; margin-top:5px;"></div>
             </div>
             <div style="text-align:center; margin-bottom:15px;">
-                <button class="orange" onclick="randomize()">🎲 Randomize #s</button>
+                <button class="orange" id="randomize-btn" onclick="randomize()">🎲 Randomize #s</button>
                 <button class="yellow" onclick="resetHeaders()">❓ Reset to '?'</button>
+                <div id="draw-locked-note" style="font-size:0.8rem; color:#888; margin-top:5px; display:none;">Lock the board to draw numbers early. Otherwise they draw at kickoff.</div>
             </div>
             <div id="mini-wrap">
                 <p style="font-size:0.8rem; margin:0; color:#666; text-align:center;">
@@ -1147,6 +1148,9 @@
             await apiCall('advance-numbers', {});
         }
         function renderNumbers(data) {
+            // Drawing early is fine, but only once nobody can pick a square after seeing the numbers.
+            ['randomize-btn', 'advance-btn'].forEach((id) => { const b = document.getElementById(id); b.disabled = !data.isLocked; b.style.opacity = data.isLocked ? '' : '0.4'; });
+            document.getElementById('draw-locked-note').style.display = data.isLocked ? 'none' : 'block';
             const wrap = document.getElementById('advance-wrap');
             const rotating = data.numberMode === 'per_quarter' || data.numberMode === 'per_half';
             wrap.style.display = rotating ? 'block' : 'none';
@@ -1205,6 +1209,7 @@
                 body: JSON.stringify(body)
             });
             if (res.status === 401) { uiAlert('Unauthorized. Check your admin link.'); return; }
+            if (!res.ok) { const d = await res.json().catch(() => ({})); if (d.error) uiAlert(d.error); }
             loadAdmin();
         }
 

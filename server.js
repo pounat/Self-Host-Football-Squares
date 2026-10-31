@@ -1467,7 +1467,10 @@ app.get('/api/pool/:id/admin/check', poolAdmin, (req, res) => res.json({ ok: tru
 
 app.post('/api/pool/:id/admin/lock', poolAdmin, ah(async (req, res) => {
     if (req.body.locked) await lockPoolAndDraw(req.params.id);
-    else await dbRun('UPDATE pools SET locked = 0 WHERE id = ?', [req.params.id]);
+    else {
+        if (await numbersAreDrawn(req.params.id)) return res.status(400).json({ error: "Reset the numbers to '?' before unlocking, so nobody can pick a square after seeing them." });
+        await dbRun('UPDATE pools SET locked = 0 WHERE id = ?', [req.params.id]);
+    }
     await logActivity(req.params.id, req.body.locked ? 'Locked the board' : 'Unlocked the board');
     res.json({ success: true });
 }));
@@ -1553,6 +1556,7 @@ app.post('/api/pool/:id/admin/clear', poolAdmin, ah(async (req, res) => {
 }));
 
 app.post('/api/pool/:id/admin/randomize', poolAdmin, ah(async (req, res) => {
+    if (req.pool.locked !== 1) return res.status(400).json({ error: 'Lock the board first, so nobody can pick a square after seeing the numbers.' });
     const mode = await poolMode(req.params.id);
     const slot = (await currentSlot(req.params.id, mode)) || SLOTS[mode][0];
     await setSlotNumbers(req.params.id, slot);
@@ -1561,6 +1565,7 @@ app.post('/api/pool/:id/admin/randomize', poolAdmin, ah(async (req, res) => {
 
 // Rotating modes: draw the next period's numbers (becomes the current set).
 app.post('/api/pool/:id/admin/advance-numbers', poolAdmin, ah(async (req, res) => {
+    if (req.pool.locked !== 1) return res.status(400).json({ error: 'Lock the board first, so nobody can pick a square after seeing the numbers.' });
     const mode = await poolMode(req.params.id);
     const slot = await nextSlot(req.params.id, mode);
     if (slot) await setSlotNumbers(req.params.id, slot);
